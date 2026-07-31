@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   ScanBarcode,
   Search,
@@ -26,6 +26,7 @@ import {
   Banknote,
 } from 'lucide-react';
 import './App.css';
+import logo from './logo.png';
 import { api } from './api';
 
 // Starting quantities/discounts applied on top of whatever the server
@@ -74,12 +75,22 @@ function peso(value) {
 
 export default function App() {
   const [items, setItems] = useState([]);
-  const [cashReceived, setCashReceived] = useState(50.0);
+  const [cashReceived, setCashReceived] = useState('0.00');
   const [payment, setPayment] = useState('cash');
   const [searchTerm, setSearchTerm] = useState('');
   const [online, setOnline] = useState(false);
   const [statusMessage, setStatusMessage] = useState('Connecting to server…');
+  const [statusOpen, setStatusOpen] = useState(false);
+  const statusMenuRef = useRef(null);
+  const [userOpen, setUserOpen] = useState(false);
+  const userMenuRef = useRef(null);
   const [submitting, setSubmitting] = useState(false);
+  const [currentTime, setCurrentTime] = useState(new Date());
+
+  useEffect(() => {
+    const timer = setInterval(() => setCurrentTime(new Date()), 1000);
+    return () => clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -115,6 +126,20 @@ export default function App() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (statusOpen && statusMenuRef.current && !statusMenuRef.current.contains(event.target)) {
+        setStatusOpen(false);
+      }
+      if (userOpen && userMenuRef.current && !userMenuRef.current.contains(event.target)) {
+        setUserOpen(false);
+      }
+    };
+
+    window.addEventListener('click', handleClickOutside);
+    return () => window.removeEventListener('click', handleClickOutside);
+  }, [statusOpen, userOpen]);
 
   const updateQty = (id, delta) => {
     setItems((prev) =>
@@ -181,15 +206,20 @@ export default function App() {
   const taxableAmount = subtotal - discountTotal;
   const vat = taxableAmount * 0.12;
   const grandTotal = taxableAmount + vat;
-  const change = cashReceived - grandTotal;
+  const cashAmount = parseFloat(cashReceived) || 0;
+  const change = cashAmount - grandTotal;
+
+  const headerTime = currentTime.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  const headerDate = currentTime.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
 
   const completeSale = async () => {
     if (items.length === 0) {
       setStatusMessage('Cart is empty');
       return;
     }
-    if (change < 0) {
-      setStatusMessage('Cash received is less than the grand total');
+    const parsedCash = parseFloat(cashReceived);
+    if (isNaN(parsedCash) || parsedCash < grandTotal) {
+      setStatusMessage('Insufficient cash');
       return;
     }
 
@@ -197,13 +227,13 @@ export default function App() {
     try {
       const receipt = await api.createSale({
         customer: 'Walk-in Customer',
-        cashReceived,
+        cashReceived: cashAmount,
         paymentType: payment,
         items: items.map((it) => ({ medicineId: it.id, qty: it.qty, discPct: it.discPct })),
       });
       setStatusMessage(`Sale #${receipt.id} complete — change ₱${peso(receipt.changeDue)}`);
       setItems([]);
-      setCashReceived(0);
+      setCashReceived('0.00');
     } catch (err) {
       setStatusMessage(err.message);
     } finally {
@@ -216,34 +246,78 @@ export default function App() {
       <header className="pos-header">
         <div className="pos-header__brand">
           <div className="pos-header__logo">
-            <Plus size={22} strokeWidth={3} />
+            <img src={logo} alt="St. Isidore's Pharmacy" className="header-logo" />
           </div>
           <div className="pos-header__title">
-            PHARMACY <span>POS</span>
+            ST. ISIDORE'S <span>PHARMACY</span>
           </div>
           <div className="pos-header__divider" />
-          <div className="pos-header__mode">CASHIER MODE</div>
+          <div className="pos-header__mode">Powered by <span>POSpilot</span></div>
         </div>
 
         <div className="pos-header__meta">
           <div className="pos-header__meta-item">
-            <User size={16} />
-            <span>User: Admin</span>
-          </div>
-          <span className="pos-header__sep" />
-          <div className="pos-header__meta-item">
             <Clock size={16} />
-            <span>10:30 AM</span>
+            <span>{headerTime} · {headerDate}</span>
           </div>
           <span className="pos-header__sep" />
-          <div className="pos-header__meta-item">
-            <Printer size={16} />
-            <span>Shift #001</span>
+          <div className="pos-header__meta-item pos-header__status" ref={statusMenuRef}>
+            <button
+              type="button"
+              className="status-toggle"
+              onClick={() => setStatusOpen((open) => !open)}
+            >
+              <CircleCheck size={16} />
+              <span>Status</span>
+              <ChevronDown size={14} />
+            </button>
+            <div className={`status-dropdown ${statusOpen ? 'status-dropdown--open' : ''}`}>
+              <div className="status-dropdown__item">
+                <div className="status-dropdown__label">
+                  <span className={`status-dot ${online ? 'status-dot--green' : 'status-dot--red'}`} />
+                  <span>{online ? 'ONLINE' : 'OFFLINE'}</span>
+                </div>
+                <span className="status-text">{online ? 'Connected' : 'Disconnected'}</span>
+              </div>
+              <div className="status-dropdown__item">
+                <span>Terminal</span>
+                <span className="status-text">PC-01</span>
+              </div>
+              <div className="status-dropdown__item">
+                <span>Printer</span>
+                <span className="status-text status-text--green">CONNECTED</span>
+              </div>
+              <div className="status-dropdown__item">
+                <span>Cash Drawer</span>
+                <span className="status-text status-text--green">CONNECTED</span>
+              </div>
+              <div className="status-dropdown__item">
+                <span>Database</span>
+                <span className="status-text status-text--green">SYNCED 10:29 AM</span>
+              </div>
+            </div>
           </div>
           <span className="pos-header__sep" />
-          <div className="pos-header__meta-item pos-header__logout">
-            <LogOut size={16} />
-            <span>Logout</span>
+          <div className="pos-header__meta-item pos-header__user" ref={userMenuRef}>
+            <button
+              type="button"
+              className="user-toggle"
+              onClick={() => setUserOpen((open) => !open)}
+            >
+              <User size={16} />
+              <span>Admin</span>
+              <ChevronDown size={14} />
+            </button>
+            <div className={`user-dropdown ${userOpen ? 'user-dropdown--open' : ''}`}>
+              <button
+                type="button"
+                className="user-dropdown__item"
+                onClick={() => setUserOpen(false)}
+              >
+                <LogOut size={14} />
+                Logout
+              </button>
+            </div>
           </div>
         </div>
       </header>
@@ -254,24 +328,18 @@ export default function App() {
             <div className="search-card__icon">
               <ScanBarcode size={26} strokeWidth={1.8} />
             </div>
-            <div className="search-card__text">
-              <div className="search-card__title">SCAN BARCODE OR SEARCH MEDICINE</div>
-              <div className="search-card__subtitle">
-                Scan barcode or type medicine name, generic, or brand
-              </div>
-            </div>
             <input
               className="search-card__input"
               type="text"
-              placeholder="Type medicine name, generic, or barcode…"
+              placeholder="SCAN BARCODE OR SEARCH MEDICINE"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               onKeyDown={handleSearchKeyDown}
             />
-            <div className="key-badge">F1</div>
+            <div className="key-badge">F2</div>
             <button className="btn btn--blue search-card__btn" onClick={addBySearch}>
-              <Search size={18} />
-              SEARCH
+              <Plus size={18} />
+              ADD ITEM
             </button>
           </div>
 
@@ -421,9 +489,21 @@ export default function App() {
               <div className="cash-field__input">
                 <span>₱</span>
                 <input
-                  type="number"
+                  type="text"
+                  inputMode="decimal"
+                  placeholder="0.00"
                   value={cashReceived}
-                  onChange={(e) => setCashReceived(parseFloat(e.target.value) || 0)}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    if (value === '' || /^[0-9]*\.?[0-9]*$/.test(value)) {
+                      setCashReceived(value);
+                    }
+                  }}
+                  onFocus={(e) => e.target.select()}
+                  onBlur={(e) => {
+                    const value = parseFloat(e.target.value);
+                    setCashReceived(isNaN(value) ? '' : value.toFixed(2));
+                  }}
                 />
               </div>
             </div>
@@ -453,42 +533,9 @@ export default function App() {
               <CircleCheck size={19} />
               {submitting ? 'PROCESSING…' : 'COMPLETE SALE (F12)'}
             </button>
-
-            <div className="bottom-actions">
-              <button className="btn btn--outline-amber">
-                <Pause size={16} />
-                HOLD TRANSACTION (F6)
-              </button>
-              <button className="btn btn--outline-blue">
-                <Printer size={16} />
-                PRINT RECEIPT (F11)
-              </button>
-            </div>
           </div>
         </aside>
       </main>
-
-      <footer className="pos-footer">
-        <div className="pos-footer__item">
-          <span className={`status-dot ${online ? 'status-dot--green' : 'status-dot--red'}`} />
-          {online ? 'ONLINE' : 'OFFLINE'}
-        </div>
-        <span className="pos-footer__sep">|</span>
-        <div className="pos-footer__item">Terminal: PC-01</div>
-        <span className="pos-footer__sep">|</span>
-        <div className="pos-footer__item">
-          Printer: <span className="status-text--green">CONNECTED</span>
-        </div>
-        <span className="pos-footer__sep">|</span>
-        <div className="pos-footer__item">
-          Cash Drawer: <span className="status-text--green">CONNECTED</span>
-        </div>
-        <span className="pos-footer__sep">|</span>
-        <div className="pos-footer__item">
-          <RefreshCw size={13} />
-          Database: <span className="status-text--green">SYNCED 10:29 AM</span>
-        </div>
-      </footer>
     </div>
   );
 }

@@ -39,7 +39,10 @@ body {
 
 body {
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  background: var(--page-bg);
+  background: radial-gradient(circle at 20% 20%, rgba(147, 197, 253, 0.3), transparent 18%),
+    radial-gradient(circle at 80% 15%, rgba(192, 132, 252, 0.22), transparent 22%),
+    radial-gradient(circle at 50% 80%, rgba(168, 85, 247, 0.14), transparent 24%),
+    linear-gradient(135deg, #eef2ff 0%, #e0e7ff 35%, #c7d2fe 70%, #eef2ff 100%);
   color: var(--text-primary);
   -webkit-font-smoothing: antialiased;
   overflow: hidden;
