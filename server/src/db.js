@@ -33,6 +33,10 @@ function createFallbackDatabase() {
           const id = Number(args[0]);
           return state.medicines.find((row) => row.id === id) || null;
         }
+        if (normalized.includes('SELECT * FROM medicines') && normalized.includes('WHERE barcode = ?')) {
+          const barcode = args[0];
+          return state.medicines.find((row) => row.barcode === barcode) || null;
+        }
         if (normalized.includes('SELECT * FROM sales') && normalized.includes('WHERE id = ?')) {
           const id = Number(args[0]);
           return state.sales.find((row) => row.id === id) || null;

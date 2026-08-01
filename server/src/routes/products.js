@@ -3,7 +3,7 @@ const db = require('../db');
 
 const router = express.Router();
 
-// GET /api/medicines?q=paracetamol
+// GET /api/products?q=paracetamol
 router.get('/', (req, res) => {
   const q = (req.query.q || '').trim();
 
@@ -24,10 +24,17 @@ router.get('/', (req, res) => {
   res.json(rows);
 });
 
-// GET /api/medicines/:id
+// GET /api/products/barcode/:barcode
+router.get('/barcode/:barcode', (req, res) => {
+  const row = db.prepare('SELECT * FROM medicines WHERE barcode = ?').get(req.params.barcode);
+  if (!row) return res.status(404).json({ error: 'Product not found' });
+  res.json(row);
+});
+
+// GET /api/products/:id
 router.get('/:id', (req, res) => {
   const row = db.prepare('SELECT * FROM medicines WHERE id = ?').get(req.params.id);
-  if (!row) return res.status(404).json({ error: 'Medicine not found' });
+  if (!row) return res.status(404).json({ error: 'Product not found' });
   res.json(row);
 });
 

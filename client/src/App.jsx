@@ -3,8 +3,8 @@ import {
   ScanBarcode,
   Search,
   ShoppingCart,
+  Tag,
   Plus,
-  Trash2,
   Minus,
   User,
   Clock,
@@ -24,41 +24,26 @@ import {
   RefreshCw,
   ShoppingBag,
   Banknote,
+  Trash2,
 } from 'lucide-react';
 import './App.css';
 import logo from './logo.png';
 import { api } from './api';
 
-// Starting quantities/discounts applied on top of whatever the server
-// returns for these three medicines, so the cart opens looking like the
-// reference screenshot. Anything not listed here just isn't pre-added.
-const STARTER_CART = {
-  'Paracetamol 500mg Tablet': { qty: 1, discPct: 0 },
-  'Amoxicillin 500mg Capsule': { qty: 2, discPct: 0 },
-  'Cetirizine 10mg Tablet': { qty: 1, discPct: 10 },
-  'Mefenamic Acid 500mg Capsule': { qty: 3, discPct: 0 },
-  'Losartan 50mg Tablet': { qty: 1, discPct: 5 },
-  'Amlodipine 5mg Tablet': { qty: 2, discPct: 0 },
-  'Metformin 500mg Tablet': { qty: 1, discPct: 0 },
-  'Omeprazole 20mg Capsule': { qty: 2, discPct: 10 },
-  'Atorvastatin 20mg Tablet': { qty: 1, discPct: 0 },
-  'Simvastatin 20mg Tablet': { qty: 1, discPct: 15 },
-  'Loperamide 2mg Capsule': { qty: 4, discPct: 0 },
-  'Vitamin C 500mg Tablet': { qty: 2, discPct: 5 },
-  'Ibuprofen 400mg Tablet': { qty: 1, discPct: 0 },
-  'Celecoxib 200mg Capsule': { qty: 2, discPct: 10 },
-  'Captopril 25mg Tablet': { qty: 3, discPct: 0 },
-};
 const functionKeys = [
-  { key: 'F2', label: 'SEARCH', icon: Search, tone: 'default' },
-  { key: 'F3', label: 'CUSTOMER', icon: User, tone: 'default' },
-  { key: 'F4', label: 'QTY', icon: Plus, tone: 'default' },
-  { key: 'F5', label: 'DISCOUNT', icon: Percent, tone: 'default' },
-  { key: 'F6', label: 'HOLD', icon: Pause, tone: 'default' },
-  { key: 'F7', label: 'RETURN', icon: RotateCcw, tone: 'default' },
-  { key: 'F8', label: 'REMOVE', icon: Trash2, tone: 'danger' },
-  { key: 'F9', label: 'VOID', icon: Ban, tone: 'danger' },
-  { key: 'ESC', label: 'CANCEL', icon: X, tone: 'default' },
+  { key: 'F1', label: 'PRICE CHECK', icon: Tag, tone: 'default', action: 'priceCheck' },
+  { key: 'F2', label: 'SEARCH PRODUCT', icon: Search, tone: 'default', action: 'searchProduct' },
+  { key: 'F3', label: 'QTY', icon: Plus, tone: 'default', action: 'qty' },
+  { key: 'F4', label: 'PRICE OVERRIDE', icon: Tag, tone: 'default', action: 'priceOverride' },
+  { key: 'F5', label: 'DISCOUNT', icon: Percent, tone: 'default', action: 'discount' },
+  { key: 'F6', label: 'HOLD', icon: Pause, tone: 'default', action: 'hold' },
+  { key: 'F7', label: 'HELD', icon: RotateCcw, tone: 'default', action: 'held' },
+  { key: 'F8', label: 'VOID', icon: Ban, tone: 'danger', action: 'void' },
+  { key: 'F9', label: 'CUSTOMER', icon: User, tone: 'default', action: 'customer' },
+  { key: 'F10', label: 'PRINT', icon: Printer, tone: 'default', action: 'print' },
+  { key: 'F12', label: 'COMPLETE', icon: CircleCheck, tone: 'default', action: 'complete' },
+  { key: 'DEL', label: 'REMOVE', icon: Trash2, tone: 'danger', action: 'void' },
+  { key: 'ESC', label: 'CANCEL', icon: X, tone: 'default', action: 'cancel' },
 ];
 
 const paymentTypes = [
@@ -75,6 +60,9 @@ function peso(value) {
 
 export default function App() {
   const [items, setItems] = useState([]);
+  const [selectedItemId, setSelectedItemId] = useState(null);
+  const [heldSale, setHeldSale] = useState(null);
+  const [lastReceiptId, setLastReceiptId] = useState(null);
   const [cashReceived, setCashReceived] = useState('0.00');
   const [payment, setPayment] = useState('cash');
   const [searchTerm, setSearchTerm] = useState('');
@@ -96,25 +84,11 @@ export default function App() {
     let cancelled = false;
 
     api
-      .getMedicines()
-      .then((catalog) => {
+      .getProducts()
+      .then(() => {
         if (cancelled) return;
         setOnline(true);
         setStatusMessage('');
-
-        const starter = catalog
-          .filter((med) => STARTER_CART[med.name])
-          .map((med) => ({
-            id: med.id,
-            name: med.name,
-            generic: med.generic,
-            batch: med.batch,
-            exp: med.exp,
-            price: med.price,
-            qty: STARTER_CART[med.name].qty,
-            discPct: STARTER_CART[med.name].discPct,
-          }));
-        setItems(starter);
       })
       .catch(() => {
         if (cancelled) return;
@@ -151,24 +125,211 @@ export default function App() {
     setItems((prev) => prev.filter((it) => it.id !== id));
   };
 
-  const clearCart = () => setItems([]);
+  const clearCart = () => {
+    setItems([]);
+    setSelectedItemId(null);
+  };
+
+  const getSelectedItem = () => items.find((item) => item.id === selectedItemId);
+
+  const handleQty = () => {
+    const selected = getSelectedItem();
+    if (!selected) {
+      setStatusMessage('Select an item before changing quantity');
+      return;
+    }
+    const value = window.prompt('Enter new quantity', String(selected.qty));
+    if (value === null) return;
+    const qty = Number(value);
+    if (!Number.isInteger(qty) || qty < 1) {
+      setStatusMessage('Invalid quantity');
+      return;
+    }
+    setItems((prev) => prev.map((it) => (it.id === selected.id ? { ...it, qty } : it)));
+    setStatusMessage('Quantity updated');
+  };
+
+  const handlePriceOverride = () => {
+    const selected = getSelectedItem();
+    if (!selected) {
+      setStatusMessage('Select an item before overriding price');
+      return;
+    }
+    const value = window.prompt('Enter new price', selected.price.toFixed(2));
+    if (value === null) return;
+    const price = parseFloat(value);
+    if (Number.isNaN(price) || price <= 0) {
+      setStatusMessage('Invalid price');
+      return;
+    }
+    setItems((prev) => prev.map((it) => (it.id === selected.id ? { ...it, price } : it)));
+    setStatusMessage('Price overridden');
+  };
+
+  const handleDiscount = () => {
+    const selected = getSelectedItem();
+    if (!selected) {
+      setStatusMessage('Select an item before applying discount');
+      return;
+    }
+    const value = window.prompt('Enter discount percentage', String(selected.discPct));
+    if (value === null) return;
+    const discPct = Number(value);
+    if (Number.isNaN(discPct) || discPct < 0 || discPct > 100) {
+      setStatusMessage('Invalid discount percentage');
+      return;
+    }
+    setItems((prev) => prev.map((it) => (it.id === selected.id ? { ...it, discPct } : it)));
+    setStatusMessage('Discount updated');
+  };
+
+  const handleHold = () => {
+    if (items.length === 0) {
+      setStatusMessage('Cart is empty');
+      return;
+    }
+    setHeldSale({ items, payment, cashReceived });
+    setItems([]);
+    setSelectedItemId(null);
+    setCashReceived('0.00');
+    setStatusMessage('Sale held');
+  };
+
+  const handleHeld = () => {
+    if (!heldSale) {
+      setStatusMessage('No held sale available');
+      return;
+    }
+    setItems(heldSale.items);
+    setPayment(heldSale.payment);
+    setCashReceived(heldSale.cashReceived);
+    setHeldSale(null);
+    setStatusMessage('Held sale restored');
+  };
+
+  const handleVoid = () => {
+    if (!selectedItemId) {
+      setStatusMessage('Select an item to void');
+      return;
+    }
+    removeItem(selectedItemId);
+    setSelectedItemId(null);
+    setStatusMessage('Item voided');
+  };
+
+  const handleCancel = () => {
+    setSelectedItemId(null);
+    setStatusOpen(false);
+    setUserOpen(false);
+    setStatusMessage('Action cancelled');
+  };
+
+  const handleCustomer = () => {
+    const select = document.querySelector('.select-field select');
+    select?.focus();
+    setStatusMessage('Choose customer details');
+  };
+
+  const handlePrintLastReceipt = () => {
+    if (!lastReceiptId) {
+      setStatusMessage('No receipt available to print');
+      return;
+    }
+    window.print();
+    setStatusMessage(`Printing receipt #${lastReceiptId}`);
+  };
+
+  const handleAction = (action) => {
+    switch (action) {
+      case 'priceCheck':
+        handlePriceCheck();
+        break;
+      case 'searchProduct':
+        addBySearch();
+        break;
+      case 'qty':
+        handleQty();
+        break;
+      case 'priceOverride':
+        handlePriceOverride();
+        break;
+      case 'discount':
+        handleDiscount();
+        break;
+      case 'hold':
+        handleHold();
+        break;
+      case 'held':
+        handleHeld();
+        break;
+      case 'void':
+        handleVoid();
+        break;
+      case 'customer':
+        handleCustomer();
+        break;
+      case 'print':
+        handlePrintLastReceipt();
+        break;
+      case 'complete':
+        completeSale();
+        break;
+      case 'cancel':
+        handleCancel();
+        break;
+      default:
+        break;
+    }
+  };
+
+  const findProductByTerm = async (term) => {
+    const trimmedTerm = term.trim();
+    if (!trimmedTerm) return null;
+
+    try {
+      let med = null;
+
+      const barcodeOnly = /^[0-9]+$/.test(trimmedTerm);
+      if (barcodeOnly) {
+        try {
+          med = await api.getProductByBarcode(trimmedTerm);
+        } catch {
+          med = null;
+        }
+      }
+
+      if (!med) {
+        const results = await api.getProducts(trimmedTerm);
+        if (results.length === 0) {
+          return null;
+        }
+        med = results[0];
+      }
+
+      return med;
+    } catch (err) {
+      throw err;
+    }
+  };
 
   const addBySearch = async () => {
     const term = searchTerm.trim();
     if (!term) return;
 
     try {
-      const results = await api.getMedicines(term);
-      if (results.length === 0) {
-        setStatusMessage(`No medicine found for "${term}"`);
+      const med = await findProductByTerm(term);
+      if (!med) {
+        setStatusMessage(`No product found for "${term}"`);
         return;
       }
-      const med = results[0];
+
       setItems((prev) => {
         const existing = prev.find((it) => it.id === med.id);
+        setSelectedItemId(med.id);
         if (existing) {
           return prev.map((it) => (it.id === med.id ? { ...it, qty: it.qty + 1 } : it));
         }
+
         return [
           ...prev,
           {
@@ -183,8 +344,29 @@ export default function App() {
           },
         ];
       });
+
       setStatusMessage('');
       setSearchTerm('');
+    } catch (err) {
+      setStatusMessage(err.message);
+    }
+  };
+
+  const handlePriceCheck = async () => {
+    const term = searchTerm.trim();
+    if (!term) {
+      setStatusMessage('Enter a barcode or product name');
+      return;
+    }
+
+    try {
+      const med = await findProductByTerm(term);
+      if (!med) {
+        setStatusMessage(`No product found for "${term}"`);
+        return;
+      }
+
+      setStatusMessage(`${med.name} — ₱${peso(med.price)}`);
     } catch (err) {
       setStatusMessage(err.message);
     }
@@ -193,6 +375,68 @@ export default function App() {
   const handleSearchKeyDown = (e) => {
     if (e.key === 'Enter') addBySearch();
   };
+
+  useEffect(() => {
+    const handleGlobalKeyDown = (event) => {
+      if (event.key === 'F1') {
+        event.preventDefault();
+        handlePriceCheck();
+        return;
+      }
+
+      if (event.key === 'F2') {
+        event.preventDefault();
+        addBySearch();
+        return;
+      }
+
+      if (['F3', 'F4', 'F5', 'F6', 'F7', 'F8', 'F9', 'F10', 'F12', 'Delete', 'Del', 'Escape', 'Esc'].includes(event.key)) {
+        event.preventDefault();
+        switch (event.key) {
+          case 'F3':
+            handleQty();
+            break;
+          case 'F4':
+            handlePriceOverride();
+            break;
+          case 'F5':
+            handleDiscount();
+            break;
+          case 'F6':
+            handleHold();
+            break;
+          case 'F7':
+            handleHeld();
+            break;
+          case 'F8':
+            handleVoid();
+            break;
+          case 'F9':
+            handleCustomer();
+            break;
+          case 'F10':
+            handlePrintLastReceipt();
+            break;
+          case 'F12':
+            completeSale();
+            break;
+          case 'Delete':
+          case 'Del':
+            handleVoid();
+            break;
+          case 'Escape':
+          case 'Esc':
+            handleCancel();
+            break;
+          default:
+            break;
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleGlobalKeyDown);
+    return () => window.removeEventListener('keydown', handleGlobalKeyDown);
+  }, [searchTerm, selectedItemId, items, heldSale, cashReceived, payment, lastReceiptId]);
 
   const rows = items.map((it) => {
     const lineSubtotal = it.qty * it.price;
@@ -232,8 +476,10 @@ export default function App() {
         items: items.map((it) => ({ medicineId: it.id, qty: it.qty, discPct: it.discPct })),
       });
       setStatusMessage(`Sale #${receipt.id} complete — change ₱${peso(receipt.changeDue)}`);
+      setLastReceiptId(receipt.id);
       setItems([]);
       setCashReceived('0.00');
+      setSelectedItemId(null);
     } catch (err) {
       setStatusMessage(err.message);
     } finally {
@@ -324,25 +570,6 @@ export default function App() {
 
       <main className="pos-main">
         <section className="pos-left">
-          <div className="card search-card">
-            <div className="search-card__icon">
-              <ScanBarcode size={26} strokeWidth={1.8} />
-            </div>
-            <input
-              className="search-card__input"
-              type="text"
-              placeholder="SCAN BARCODE OR SEARCH MEDICINE"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              onKeyDown={handleSearchKeyDown}
-            />
-            <div className="key-badge">F2</div>
-            <button className="btn btn--blue search-card__btn" onClick={addBySearch}>
-              <Plus size={18} />
-              ADD ITEM
-            </button>
-          </div>
-
           {statusMessage && (
             <div className={`status-banner ${online ? '' : 'status-banner--offline'}`}>
               {statusMessage}
@@ -351,6 +578,20 @@ export default function App() {
 
           <div className="card item-list-card">
             <div className="item-list-card__header">
+              <div className="barcode-search">
+                <div className="search-card__icon">
+                  <ScanBarcode size={26} strokeWidth={1.8} />
+                </div>
+                <input
+                  className="search-card__input"
+                  type="text"
+                  placeholder="SCAN BARCODE OR SKU"
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  onKeyDown={handleSearchKeyDown}
+                />
+              </div>
+
               <div className="item-list-card__heading">
                 <div className="item-list-card__icon">
                   <ShoppingCart size={20} strokeWidth={2} />
@@ -360,55 +601,33 @@ export default function App() {
                   <div className="item-list-card__subtitle">{items.length} item(s)</div>
                 </div>
               </div>
-              <div className="item-list-card__actions">
-                <button className="btn btn--outline-blue">
-                  <Plus size={16} />
-                  ADD ITEM (F2)
-                </button>
-                <button className="btn btn--outline-red" onClick={clearCart}>
-                  <Trash2 size={16} />
-                  CLEAR CART (F8)
-                </button>
-              </div>
             </div>
 
             <div className="item-table">
               <div className="item-table__row item-table__row--head">
-                <div className="col col--num">#</div>
-                <div className="col col--del" />
+                <div className="col col--med">PRODUCT NAME</div>
                 <div className="col col--qty">QTY</div>
-                <div className="col col--med">MEDICINE</div>
                 <div className="col col--price">PRICE</div>
                 <div className="col col--disc">DISC %</div>
                 <div className="col col--discval">DISCOUNT</div>
                 <div className="col col--total">TOTAL</div>
               </div>
 
-              {rows.map((row, idx) => (
-                <div className="item-table__row" key={row.id}>
-                  <div className="col col--num">{idx + 1}</div>
-                  <div className="col col--del">
-                    <button className="icon-btn icon-btn--red" onClick={() => removeItem(row.id)}>
-                      <Trash2 size={16} />
-                    </button>
-                  </div>
-                  <div className="col col--qty">
-                    <div className="qty-stepper">
-                      <span className="qty-stepper__value">{row.qty}</span>
-                      <button className="qty-stepper__btn" onClick={() => updateQty(row.id, -1)}>
-                        <Minus size={13} />
-                      </button>
-                      <button className="qty-stepper__btn" onClick={() => updateQty(row.id, 1)}>
-                        <Plus size={13} />
-                      </button>
-                    </div>
-                  </div>
+              {rows.map((row) => (
+                <div
+                  className={`item-table__row ${selectedItemId === row.id ? 'item-table__row--selected' : ''}`}
+                  key={row.id}
+                  onClick={() => setSelectedItemId(row.id)}
+                >
                   <div className="col col--med">
                     <div className="med-name">{row.name}</div>
                     <div className="med-generic">{row.generic}</div>
                     <div className="med-batch">
                       Batch: {row.batch} | Exp: {row.exp}
                     </div>
+                  </div>
+                  <div className="col col--qty">
+                    <span className="qty-stepper__value">{row.qty}</span>
                   </div>
                   <div className="col col--price">{row.price.toFixed(2)}</div>
                   <div className={`col col--disc ${row.discPct > 0 ? 'is-positive' : ''}`}>
@@ -424,8 +643,13 @@ export default function App() {
           </div>
 
           <div className="function-keys">
-            {functionKeys.map(({ key, label, icon: Icon, tone }) => (
-              <button key={key} className={`fn-key ${tone === 'danger' ? 'fn-key--danger' : ''}`}>
+            {functionKeys.map(({ key, label, icon: Icon, tone, action }) => (
+              <button
+                key={key}
+                className={`fn-key ${tone === 'danger' ? 'fn-key--danger' : ''}`}
+                type="button"
+                onClick={() => handleAction(action)}
+              >
                 <span className="fn-key__badge">{key}</span>
                 <span className="fn-key__icon">
                   <Icon size={20} strokeWidth={2} />

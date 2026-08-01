@@ -18,8 +18,9 @@ async function request(path, options = {}) {
 }
 
 export const api = {
-  getMedicines: (q = '') => request(`/medicines${q ? `?q=${encodeURIComponent(q)}` : ''}`),
-  getMedicine: (id) => request(`/medicines/${id}`),
+  getProducts: (q = '') => request(`/products${q ? `?q=${encodeURIComponent(q)}` : ''}`),
+  getProduct: (id) => request(`/products/${id}`),
+  getProductByBarcode: (barcode) => request(`/products/barcode/${encodeURIComponent(barcode)}`),
   createSale: (payload) =>
     request('/sales', {
       method: 'POST',

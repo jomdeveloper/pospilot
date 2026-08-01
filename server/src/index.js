@@ -2,7 +2,7 @@ const path = require('path');
 const express = require('express');
 const cors = require('cors');
 
-const medicinesRouter = require('./routes/medicines');
+const productsRouter = require('./routes/products');
 const salesRouter = require('./routes/sales');
 
 const PORT = process.env.PORT || 4000;
@@ -15,7 +15,7 @@ function createServer() {
   app.use(express.json());
 
   app.get('/api/health', (req, res) => res.json({ ok: true }));
-  app.use('/api/medicines', medicinesRouter);
+  app.use('/api/products', productsRouter);
   app.use('/api/sales', salesRouter);
 
   app.use(express.static(clientDistPath));
