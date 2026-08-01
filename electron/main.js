@@ -17,12 +17,9 @@ let mainWindow;
 
 async function createWindow() {
   mainWindow = new BrowserWindow({
-    width: 1440,
-    height: 900,
-    minWidth: 1100,
-    minHeight: 700,
     show: false,
     autoHideMenuBar: true,
+    fullscreenable: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -45,6 +42,7 @@ async function createWindow() {
     await mainWindow.loadURL(PROD_CLIENT_URL);
   }
 
+  mainWindow.maximize();
   mainWindow.once('ready-to-show', () => {
     mainWindow.show();
   });

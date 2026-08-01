@@ -74,6 +74,11 @@ export default function App() {
   const userMenuRef = useRef(null);
   const [submitting, setSubmitting] = useState(false);
   const [currentTime, setCurrentTime] = useState(new Date());
+  const selectedRowRef = useRef(null);
+  const newlyAddedItemIdRef = useRef(null);
+  const newlyAddedRowRef = useRef(null);
+  const prevItemsLengthRef = useRef(items.length);
+  const itemTableRef = useRef(null);
 
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
@@ -330,8 +335,8 @@ export default function App() {
           return prev.map((it) => (it.id === med.id ? { ...it, qty: it.qty + 1 } : it));
         }
 
+        newlyAddedItemIdRef.current = med.id;
         return [
-          ...prev,
           {
             id: med.id,
             name: med.name,
@@ -342,6 +347,7 @@ export default function App() {
             qty: 1,
             discPct: 0,
           },
+          ...prev,
         ];
       });
 
@@ -444,6 +450,21 @@ export default function App() {
     const total = lineSubtotal - discount;
     return { ...it, lineSubtotal, discount, total };
   });
+
+  useEffect(() => {
+    if (!itemTableRef.current) return;
+
+    const addedItem = items.length > prevItemsLengthRef.current;
+    if (addedItem && newlyAddedRowRef.current) {
+      newlyAddedRowRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      newlyAddedItemIdRef.current = null;
+      newlyAddedRowRef.current = null;
+    } else if (selectedRowRef.current) {
+      selectedRowRef.current.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+
+    prevItemsLengthRef.current = items.length;
+  }, [items.length, selectedItemId]);
 
   const subtotal = rows.reduce((sum, r) => sum + r.lineSubtotal, 0);
   const discountTotal = rows.reduce((sum, r) => sum + r.discount, 0);
@@ -603,7 +624,7 @@ export default function App() {
               </div>
             </div>
 
-            <div className="item-table">
+            <div className="item-table" ref={itemTableRef}>
               <div className="item-table__row item-table__row--head">
                 <div className="col col--med">PRODUCT NAME</div>
                 <div className="col col--qty">QTY</div>
@@ -617,6 +638,10 @@ export default function App() {
                 <div
                   className={`item-table__row ${selectedItemId === row.id ? 'item-table__row--selected' : ''}`}
                   key={row.id}
+                  ref={(el) => {
+                    if (selectedItemId === row.id) selectedRowRef.current = el;
+                    if (newlyAddedItemIdRef.current === row.id) newlyAddedRowRef.current = el;
+                  }}
                   onClick={() => setSelectedItemId(row.id)}
                 >
                   <div className="col col--med">
