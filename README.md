@@ -5,7 +5,7 @@ A pharmacy point-of-sale app, split into three pieces:
 ```
 pospilot/
 ├── client/     React (Vite) front end — the cashier screen UI
-├── server/     Express API + better-sqlite3 database (medicines, sales)
+├── server/     Express API + better-sqlite3 database (products, sales)
 └── electron/   Desktop shell that boots the server and loads the client
 ```
 
@@ -13,8 +13,8 @@ pospilot/
 
 - **server** owns the data. It runs an Express API on `http://localhost:4000`
   backed by a local SQLite file at `server/data/pospilot.db` (created
-  automatically on first run, seeded with a few sample medicines).
-  - `GET /api/medicines?q=...` — search the catalog
+  automatically on first run).
+  - `GET /api/products?q=...` — search the catalog
   - `POST /api/sales` — checkout a cart; decrements stock and stores the sale
   - `GET /api/sales` — recent sales
 - **client** is a plain React app. It calls the server over `fetch()` using
@@ -58,9 +58,9 @@ Node.js version using NODE_MODULE_VERSION 127. This version of Node.js
 requires NODE_MODULE_VERSION 128.
 ```
 
-`server/` and `electron/` share one `node_modules` folder (Electron
-`require()`s the server directly), so only one ABI can be "active" at a
-time. Two scripts flip between them:
+Electron and system Node require different native-module builds. Desktop mode
+runs the backend inside Electron, while browser mode runs it with system Node.
+Two scripts flip between the builds:
 
 ```bash
 npm run rebuild:electron   # build better-sqlite3 for Electron (do this before dev:desktop)
@@ -87,8 +87,9 @@ Open http://localhost:5173.
 npm run dev:desktop
 ```
 
-This starts the server, starts the Vite dev server, waits for it to be
-ready, then launches the Electron window pointed at it.
+This starts the Vite dev server, waits for it to be ready, then launches
+Electron. Electron starts the API itself with the Electron-native SQLite
+module.
 
 ## Building the desktop app for real use
 
@@ -112,9 +113,7 @@ ready, then launches the Electron window pointed at it.
   make sure you have the usual native build tools (Xcode command line tools
   on macOS, `build-essential`/`python3` on Linux, or the "Desktop development
   with C++" workload on Windows).
-- The database file lives at `server/data/pospilot.db`. Delete it to reset
-  to the seed data.
-- The cashier screen's starting cart (Paracetamol, Amoxicillin, Cetirizine)
-  is just illustrative — it's built from whatever the server returns for
-  those three medicines, so quantities/prices always come from the database,
-  never hardcoded in the UI.
+- The database file lives at `server/data/pospilot.db`.
+- The cashier screen's starting cart is just illustrative — it's built from
+  whatever the server returns for the selected products, so quantities and
+  prices always come from the database, never hardcoded in the UI.

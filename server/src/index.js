@@ -4,6 +4,13 @@ const cors = require('cors');
 
 const productsRouter = require('./routes/products');
 const salesRouter = require('./routes/sales');
+const usersRouter = require('./routes/users');
+const authRouter = require('./routes/auth');
+const procurementRouter = require('./routes/procurement');
+const categoriesRouter = require('./routes/categories');
+const suppliersRouter = require('./routes/suppliers');
+const customersRouter = require('./routes/customers');
+const auditRouter = require('./routes/audit');
 
 const PORT = process.env.PORT || 4000;
 
@@ -12,11 +19,18 @@ function createServer() {
   const clientDistPath = path.resolve(__dirname, '..', '..', 'client', 'dist');
 
   app.use(cors());
-  app.use(express.json());
+  app.use(express.json({ limit: '10mb' }));
 
   app.get('/api/health', (req, res) => res.json({ ok: true }));
   app.use('/api/products', productsRouter);
   app.use('/api/sales', salesRouter);
+  app.use('/api/users', usersRouter);
+  app.use('/api/auth', authRouter);
+  app.use('/api/procurement', procurementRouter);
+  app.use('/api/categories', categoriesRouter);
+  app.use('/api/suppliers', suppliersRouter);
+  app.use('/api/customers', customersRouter);
+  app.use('/api/audit-logs', auditRouter);
 
   app.use(express.static(clientDistPath));
   app.get('*', (req, res) => {

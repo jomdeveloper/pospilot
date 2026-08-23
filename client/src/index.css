@@ -1,6 +1,8 @@
 :root {
   --navy: #0b2545;
   --navy-light: #123a6b;
+  --navy: #0b2545;
+  --navy-light: #123a6b;
   --teal: #14b8a6;
   --teal-dark: #0d9488;
   --blue: #2563eb;
@@ -14,9 +16,9 @@
   --red-bg: #fef2f2;
   --amber: #d97706;
   --amber-bg: #fffbeb;
-  --page-bg: #f1f4f8;
-  --card-bg: #ffffff;
-  --border: #e2e7ee;
+  --page-bg: #f6f7fa;
+  --card-bg: #fafbfc;
+  --border: #eceff4;
   --border-soft: #edf0f4;
   --text-primary: #101828;
   --text-secondary: #667085;
