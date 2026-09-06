@@ -14,9 +14,9 @@ import Icon from "./Icon.jsx";
 import { useButtonFlash } from "./useButtonFlash.js";
 
 const QUICK_ACTIONS = [
-  { key: "F2", name: "Product Search", icon: "tag", action: "productSearch" },
-  { key: "F3", name: "Change Qty", icon: "qty", action: "quantity" },
-  { key: "DEL", name: "Remove Item", icon: "void", action: "void" },
+  { key: "F2", name: "Search", icon: "tag", action: "productSearch" },
+  { key: "F3", name: "Quantity", icon: "qty", action: "quantity" },
+  { key: "DEL", name: "Remove", icon: "void", action: "void" },
   { key: "F6", name: "Hold", icon: "hold", action: "hold" },
   { key: "F7", name: "Recall", icon: "recall", action: "recall" },
   { key: "F10", name: "More", icon: "more", action: "more" }

@@ -113,6 +113,7 @@ db.exec(`
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     transaction_ref TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+    status TEXT NOT NULL DEFAULT 'COMPLETED',
     customer TEXT NOT NULL DEFAULT 'Walk-in Customer',
     member_id TEXT,
     subtotal REAL NOT NULL,
@@ -143,8 +144,23 @@ db.exec(`
     quantity INTEGER NOT NULL CHECK (quantity > 0),
     refund_amount REAL NOT NULL DEFAULT 0,
     reason TEXT NOT NULL,
+    refund_method TEXT NOT NULL DEFAULT 'cash',
     actor_user_id INTEGER,
     actor_username TEXT,
+    approved_by_user_id INTEGER,
+    approved_by_username TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+  );
+
+  CREATE TABLE IF NOT EXISTS sale_voids (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    sale_id INTEGER NOT NULL UNIQUE REFERENCES sales(id),
+    reason TEXT NOT NULL,
+    description TEXT,
+    voided_by_user_id INTEGER,
+    voided_by_username TEXT,
+    approved_by_user_id INTEGER,
+    approved_by_username TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
   );
 
@@ -329,6 +345,7 @@ db.exec(`
 
 const salesColumns = new Set(db.prepare('PRAGMA table_info(sales)').all().map((column) => column.name));
 if (!salesColumns.has('transaction_ref')) db.exec('ALTER TABLE sales ADD COLUMN transaction_ref TEXT');
+if (!salesColumns.has('status')) db.exec("ALTER TABLE sales ADD COLUMN status TEXT NOT NULL DEFAULT 'COMPLETED'");
 // Cash-drawer integration: every sale can be attributed to an open cashier
 // session and carries the exact portion of the tender that physically lands
 // in the drawer (0 for card/e-wallet/bank; the cash leg only for split tenders).
@@ -365,7 +382,70 @@ db.exec(`
     actor_username TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
   );
+
+  CREATE TABLE IF NOT EXISTS approval_requests (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    type TEXT NOT NULL,
+    title TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    details_json TEXT NOT NULL DEFAULT '{}',
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected')),
+    requested_by_user_id INTEGER NOT NULL REFERENCES users(id),
+    requested_by_username TEXT NOT NULL,
+    entity_id TEXT,
+    request_ref TEXT,
+    reviewed_by_user_id INTEGER,
+    reviewed_by_username TEXT,
+    review_note TEXT,
+    reviewed_at TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+  );
+
+  CREATE TABLE IF NOT EXISTS pending_sales (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    cashier_session_id INTEGER REFERENCES cashier_sessions(id),
+    customer_name TEXT NOT NULL DEFAULT 'Walk-in Customer',
+    customer_type TEXT NOT NULL DEFAULT 'walkin',
+    member_id TEXT,
+    payload_json TEXT NOT NULL DEFAULT '{}',
+    status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'in_progress', 'recalled', 'completed', 'cancelled')),
+    created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+    recalled_at TEXT,
+    recalled_by_user_id INTEGER,
+    recalled_by_username TEXT
+  );
 `);
+
+const pendingSalesSchema = db
+  .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'pending_sales'")
+  .get();
+if (pendingSalesSchema && !/in_progress/.test(pendingSalesSchema.sql || '') && !/cancelled/.test(pendingSalesSchema.sql || '')) {
+  db.transaction(() => {
+    db.exec(`
+      ALTER TABLE pending_sales RENAME TO pending_sales_old;
+      CREATE TABLE pending_sales (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        cashier_session_id INTEGER REFERENCES cashier_sessions(id),
+        customer_name TEXT NOT NULL DEFAULT 'Walk-in Customer',
+        customer_type TEXT NOT NULL DEFAULT 'walkin',
+        member_id TEXT,
+        payload_json TEXT NOT NULL DEFAULT '{}',
+        status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'in_progress', 'recalled', 'completed', 'cancelled')),
+        created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+        recalled_at TEXT,
+        recalled_by_user_id INTEGER,
+        recalled_by_username TEXT
+      );
+      INSERT INTO pending_sales (id, cashier_session_id, customer_name, customer_type, member_id, payload_json, status, created_at, recalled_at, recalled_by_user_id, recalled_by_username)
+        SELECT id, cashier_session_id, customer_name, customer_type, member_id, payload_json, status, created_at, recalled_at, recalled_by_user_id, recalled_by_username
+        FROM pending_sales_old;
+      DROP TABLE pending_sales_old;
+    `);
+  })();
+}
+
+db.exec('CREATE INDEX IF NOT EXISTS idx_approval_requests_status ON approval_requests(status, created_at DESC)');
+db.exec('CREATE INDEX IF NOT EXISTS idx_pending_sales_status ON pending_sales(status, created_at DESC)');
 
 // The POS may sell down past zero (cashier sells what is physically present,
 // then staff reconcile via Stock Adjustment). Remove the old
@@ -398,6 +478,25 @@ db.prepare(`
   SELECT ?, id, stock FROM products
 `).run(mainLocationId);
 
+const defaultCategories = [
+  { name: 'General', description: 'Core retail items', status: 'Active' },
+  { name: 'Services', description: 'Service offerings and labor', status: 'Active' },
+];
+defaultCategories.forEach(({ name, description, status }) => {
+  db.prepare('INSERT OR IGNORE INTO categories (name, description, status) VALUES (?, ?, ?)').run(name, description, status);
+});
+
+db.prepare('INSERT OR IGNORE INTO product_types (name, category_name, description) VALUES (?, ?, ?)').run(
+  'General Merchandise',
+  'General',
+  'Standard retail inventory'
+);
+db.prepare('INSERT OR IGNORE INTO product_types (name, category_name, description) VALUES (?, ?, ?)').run(
+  'Services',
+  'Services',
+  'Service offerings and labor'
+);
+
 const productColumns = new Set(db.prepare('PRAGMA table_info(products)').all().map((column) => column.name));
 [
   ['description', 'TEXT'],
@@ -406,6 +505,11 @@ const productColumns = new Set(db.prepare('PRAGMA table_info(products)').all().m
 });
 const saleItemColumns = new Set(db.prepare('PRAGMA table_info(sale_items)').all().map((column) => column.name));
 if (!saleItemColumns.has('returned_qty')) db.exec('ALTER TABLE sale_items ADD COLUMN returned_qty INTEGER NOT NULL DEFAULT 0');
+const saleReturnColumns = new Set(db.prepare('PRAGMA table_info(sale_returns)').all().map((column) => column.name));
+if (!saleReturnColumns.has('refund_method')) db.exec("ALTER TABLE sale_returns ADD COLUMN refund_method TEXT NOT NULL DEFAULT 'cash'");
+if (!saleReturnColumns.has('approved_by_user_id')) db.exec('ALTER TABLE sale_returns ADD COLUMN approved_by_user_id INTEGER');
+if (!saleReturnColumns.has('approved_by_username')) db.exec('ALTER TABLE sale_returns ADD COLUMN approved_by_username TEXT');
+db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_sale_voids_sale ON sale_voids(sale_id)');
 const batchColumns = new Set(db.prepare('PRAGMA table_info(inventory_batches)').all().map((column) => column.name));
 [
   ['storage_condition', 'TEXT'],

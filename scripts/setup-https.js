@@ -14,7 +14,10 @@ function getLocalIp() {
       }
     }
   }
-  throw new Error('No LAN IPv4 address found. Connect to Wi-Fi or Ethernet and try again.');
+
+  // Local-only installs may not have a Wi‑Fi/Ethernet adapter attached.
+  // Fall back to loopback so the POS can still run on this machine without LAN.
+  return '127.0.0.1';
 }
 
 function runMkcert(args) {
@@ -45,6 +48,10 @@ const keyPath = path.join(certificateDirectory, 'pospilot-key.pem');
 const ipFilePath = path.join(certificateDirectory, 'last-ip.txt');
 const lanIp = getLocalIp();
 const previousIp = fs.existsSync(ipFilePath) ? fs.readFileSync(ipFilePath, 'utf8').trim() : '';
+
+if (lanIp === '127.0.0.1') {
+  console.log('No LAN IPv4 address detected. Running in local-only mode using 127.0.0.1.');
+}
 
 fs.mkdirSync(certificateDirectory, { recursive: true });
 if (previousIp !== lanIp || !fs.existsSync(keyPath) || certificateNeedsRenewal(certificatePath)) {

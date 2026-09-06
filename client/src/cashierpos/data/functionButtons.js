@@ -24,11 +24,11 @@
  * (F4 Discount) are exposed through the "More" pop-dialog instead.
  */
 export const BOTTOM_FUNCTION_BUTTONS = [
-  { key: "F2",  name: "Product Search",  icon: "tag",     action: "productSearch" },
+  { key: "F2",  name: "Search",          icon: "tag",     action: "productSearch" },
   { key: "F3",  name: "Quantity",        icon: "qty",     action: "quantity" },
   { key: "F5",  name: "Price Check",     icon: "tag",     action: "priceCheck" },
   { key: "F6",  name: "Hold",            icon: "hold",    action: "hold" },
   { key: "F7",  name: "Recall",          icon: "recall",  action: "recall" },
-  { key: "DEL", name: "Remove Item",     icon: "void",    action: "void", danger: true },
+  { key: "DEL", name: "Remove",          icon: "void",    action: "void", danger: true },
   { key: "F10", name: "More",            icon: "more",    action: "more" }
 ];

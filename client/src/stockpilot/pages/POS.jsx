@@ -12,6 +12,7 @@ import { readStoreSettings } from "../settings";
 import { splitVat, roundMoney } from "../../cashierpos/utils/calculations";
 
 export default function POSPage({ t, sessionToken }) {
+  const STORAGE_KEY = "stockpilot-held-sales-v1";
   const [products, setProducts] = useState([]);
   const [customers, setCustomers] = useState([]);
   const [query, setQuery] = useState("");
@@ -27,7 +28,20 @@ export default function POSPage({ t, sessionToken }) {
   const [customerId, setCustomerId] = useState(""); // PosPilot customers.id ("" = walk-in)
   const [lastSale, setLastSale] = useState(null);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const [approvalOpen, setApprovalOpen] = useState(false);
+  const [approvalDraft, setApprovalDraft] = useState({ type: "discount_override", reason: "", title: "" });
+  const [approvalBusy, setApprovalBusy] = useState(false);
   const [session, setSession] = useState(null); // open cashier session (register gate)
+  const [heldSales, setHeldSales] = useState(() => {
+    try {
+      const stored = window.localStorage.getItem(STORAGE_KEY);
+      const parsed = stored ? JSON.parse(stored) : [];
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (_error) {
+      return [];
+    }
+  });
 
   useEffect(() => {
     getProducts().then(setProducts).catch((requestError) => setError(requestError.message || "Unable to load products"));
@@ -40,6 +54,14 @@ export default function POSPage({ t, sessionToken }) {
         .catch(() => {});
     }
   }, []);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(heldSales));
+    } catch (_error) {
+      // Ignore storage failures so the sales flow still works in locked-down environments.
+    }
+  }, [heldSales]);
 
   const filtered = useMemo(() => products.filter((p) => {
     const matchQ = (p.name + p.brand + p.barcode).toLowerCase().includes(query.toLowerCase());
@@ -119,16 +141,93 @@ export default function POSPage({ t, sessionToken }) {
       setTransactionRef(sale.transactionId || `#${sale.id}`);
       setPayOpen(false);
       setReceiptOpen(true);
+      setHeldSales((prev) => prev.filter((held) => held.id !== ""));
     } catch (err) {
       setPayOpen(false);
       setError(err.message || "Unable to complete sale");
     }
   };
+
+  const holdCurrentSale = () => {
+    if (!cart.length) {
+      setError("Add at least one item before holding a sale.");
+      return;
+    }
+
+    const heldSale = {
+      id: Date.now(),
+      createdAt: new Date().toISOString(),
+      customerId,
+      customerIdLabel: selectedCustomer ? selectedCustomer.name : "Walk-in Customer",
+      customerType,
+      discountPct,
+      lines: cart.map((item) => ({ ...item })),
+      subtotal,
+      vat,
+      total,
+    };
+
+    setHeldSales((prev) => [heldSale, ...prev].slice(0, 10));
+    setCart([]);
+    setDiscountPct(0);
+    setCustomerId("");
+    setError("");
+  };
+
+  const recallHeldSale = (held) => {
+    if (!held || !Array.isArray(held.lines) || held.lines.length === 0) return;
+    setCart(held.lines.map((item) => ({ ...item })));
+    setDiscountPct(Number(held.discountPct) || 0);
+    setCustomerId(held.customerId || "");
+    setHeldSales((prev) => prev.filter((entry) => entry.id !== held.id));
+    setError("");
+  };
+
   const newSale = () => { setCart([]); setDiscountPct(0); setReceiptOpen(false); setMethod("cash"); setCashReceived(""); setCustomerId(""); setLastSale(null); setError(""); };
+
+  const submitApprovalRequest = async () => {
+    if (!sessionToken) {
+      setError("You must be signed in to request approval.");
+      return;
+    }
+    const title = approvalDraft.title.trim() || `${approvalDraft.type.replace(/_/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase())} request`;
+    const reason = approvalDraft.reason.trim();
+    if (!reason) {
+      setError("Please describe the exception before submitting the approval request.");
+      return;
+    }
+
+    setApprovalBusy(true);
+    setError("");
+    try {
+      await api.createApprovalRequest({
+        type: approvalDraft.type,
+        title,
+        reason,
+        details: {
+          customerType,
+          customerName,
+          itemCount: cart.reduce((count, item) => count + item.qty, 0),
+          subtotal,
+          discountPct,
+          total,
+          cart: cart.map((item) => ({ id: item.id, name: item.name, qty: item.qty, price: item.price })),
+        },
+      }, sessionToken);
+      setApprovalOpen(false);
+      setApprovalDraft({ type: "discount_override", reason: "", title: "" });
+      setNotice("Approval request submitted to management.");
+    } catch (requestError) {
+      setError(requestError.message || "Unable to submit approval request.");
+    } finally {
+      setApprovalBusy(false);
+    }
+  };
 
   return (
     <div className="pos-workspace grid grid-cols-1 xl:grid-cols-[minmax(0,1.35fr)_minmax(360px,0.65fr)] gap-4 items-start">
       <section className="pos-catalog space-y-4 min-w-0">
+        {notice && <div className="rounded-xl px-4 py-3 text-sm" style={{ background: t.successSoft, color: t.success }}>{notice}</div>}
         {error && <div className="rounded-xl px-4 py-3 text-sm" style={{ background: t.dangerSoft, color: t.danger }}>{error}</div>}
         {session && (
           <div className="rounded-xl px-4 py-3 flex flex-wrap items-center gap-x-6 gap-y-1 text-xs"
@@ -254,12 +353,115 @@ export default function POSPage({ t, sessionToken }) {
           <span className="text-2xl font-extrabold" style={{ color: t.primary, fontFamily: "Manrope, sans-serif" }}>{money(total)}</span>
         </div>
 
-        <div className="px-5 pb-5">
+        <div className="px-5 py-3 space-y-2">
+          <div className="grid grid-cols-2 gap-2">
+            <Button t={t} className="w-full" variant="outline" disabled={cart.length === 0} onClick={holdCurrentSale}>
+              Hold Sale
+            </Button>
+            <Button t={t} className="w-full" variant="outline" disabled={heldSales.length === 0} onClick={() => recallHeldSale(heldSales[0])}>
+              Recall
+            </Button>
+          </div>
+          <Button t={t} className="w-full" variant="outline" disabled={cart.length === 0} onClick={() => { setNotice(""); setApprovalOpen(true); }}>
+            Request approval
+          </Button>
           <Button t={t} className="w-full" size="lg" disabled={cart.length === 0} onClick={() => setPayOpen(true)}>
             <CreditCard size={16} /> Checkout
           </Button>
         </div>
+
+        {heldSales.length > 0 && (
+          <div className="px-5 pb-4">
+            <div className="rounded-xl p-3" style={{ background: t.bg, border: `1px solid ${t.border}` }}>
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-[10px] font-bold uppercase tracking-[0.16em]" style={{ color: t.sub }}>Pending sales</span>
+                <span className="text-[10px] font-semibold" style={{ color: t.primary }}>{heldSales.length}</span>
+              </div>
+              <div className="space-y-2">
+                {heldSales.slice(0, 3).map((held) => (
+                  <button
+                    key={held.id}
+                    type="button"
+                    className="w-full rounded-lg px-2 py-2 text-left"
+                    style={{ background: t.card, border: `1px solid ${t.border}` }}
+                    onClick={() => recallHeldSale(held)}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[11px] font-semibold" style={{ color: t.text }}>{held.customerIdLabel || "Walk-in Customer"}</span>
+                      <span className="text-[10px]" style={{ color: t.sub }}>{held.lines.reduce((count, item) => count + item.qty, 0)} items</span>
+                    </div>
+                    <div className="mt-1 flex items-center justify-between text-[10px]" style={{ color: t.sub }}>
+                      <span>{new Date(held.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
+                      <strong style={{ color: t.text }}>{money(held.total)}</strong>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
       </Card>
+
+      {approvalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4">
+          <div className="w-full max-w-lg rounded-2xl border p-5" style={{ background: t.card, borderColor: t.border }}>
+            <div className="flex items-center justify-between gap-3 mb-4">
+              <div>
+                <p className="text-[10px] uppercase tracking-[0.16em] font-bold" style={{ color: t.sub }}>Exception request</p>
+                <h3 className="text-lg font-extrabold" style={{ color: t.text }}>Manager approval</h3>
+              </div>
+              <button type="button" onClick={() => setApprovalOpen(false)} className="rounded-lg px-2 py-1 text-xs font-semibold" style={{ background: t.bg, color: t.sub }}>Close</button>
+            </div>
+
+            <div className="space-y-3">
+              <label className="block">
+                <span className="text-xs font-semibold mb-1 block" style={{ color: t.sub }}>Type</span>
+                <select
+                  value={approvalDraft.type}
+                  onChange={(event) => setApprovalDraft((current) => ({ ...current, type: event.target.value }))}
+                  className="w-full px-3 py-2.5 rounded-xl text-sm outline-none"
+                  style={{ background: t.bg, color: t.text, border: `1px solid ${t.border}` }}
+                >
+                  <option value="discount_override">Discount override</option>
+                  <option value="price_override">Price override</option>
+                  <option value="cash_exception">Cash exception</option>
+                  <option value="manual_adjustment">Manual stock adjustment</option>
+                </select>
+              </label>
+
+              <label className="block">
+                <span className="text-xs font-semibold mb-1 block" style={{ color: t.sub }}>Title</span>
+                <input
+                  value={approvalDraft.title}
+                  onChange={(event) => setApprovalDraft((current) => ({ ...current, title: event.target.value }))}
+                  placeholder="Optional short title"
+                  className="w-full px-3 py-2.5 rounded-xl text-sm outline-none"
+                  style={{ background: t.bg, color: t.text, border: `1px solid ${t.border}` }}
+                />
+              </label>
+
+              <label className="block">
+                <span className="text-xs font-semibold mb-1 block" style={{ color: t.sub }}>Reason</span>
+                <textarea
+                  value={approvalDraft.reason}
+                  onChange={(event) => setApprovalDraft((current) => ({ ...current, reason: event.target.value }))}
+                  rows="4"
+                  placeholder="Explain why this exception is required"
+                  className="w-full px-3 py-2.5 rounded-xl text-sm outline-none resize-none"
+                  style={{ background: t.bg, color: t.text, border: `1px solid ${t.border}` }}
+                />
+              </label>
+            </div>
+
+            <div className="mt-4 flex justify-end gap-2">
+              <Button t={t} variant="outline" onClick={() => setApprovalOpen(false)} disabled={approvalBusy}>Cancel</Button>
+              <Button t={t} variant="primary" onClick={submitApprovalRequest} disabled={approvalBusy}>
+                {approvalBusy ? "Submitting..." : "Send for approval"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {payOpen && (
           <PaymentModal t={t} method={method} setMethod={setMethod} total={total} cashReceived={cashReceived} setCashReceived={setCashReceived} onClose={() => setPayOpen(false)} onConfirm={completeSale} />

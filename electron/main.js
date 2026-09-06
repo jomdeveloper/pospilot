@@ -190,7 +190,7 @@ function listSerialPortsInfo() {
       $rows = @()
 
       # Source 1: classic COM devices with friendly names (Win32_SerialPort).
-      Get-CimInstance Win32_SerialPort | ForEach-Object {
+      Get-CimInstance Win32_SerialPort -ErrorAction SilentlyContinue | ForEach-Object {
         $name = "$($_.DeviceID)"
         if ($name -match 'COM\d+' -and -not $seen[$name.ToUpper()]) {
           $seen[$name.ToUpper()] = $true
@@ -198,7 +198,19 @@ function listSerialPortsInfo() {
         }
       }
 
-      # Source 2: present PnP "Ports" devices (USB serial adapters, BT links).
+      # Source 2: present PnP devices that expose a COM designation (USB serial
+      # adapters, BT links, and some USB-to-serial bridge chips).
+      Get-CimInstance Win32_PnPEntity -ErrorAction SilentlyContinue | ForEach-Object {
+        $raw = "$($_.Name)"
+        if ($raw -match '\((?<com>\w*[Cc][Oo][Mm]\d+)\)') {
+          $name = $matches['com'].ToUpper()
+          if (-not $seen[$name]) {
+            $seen[$name] = $true
+            $rows += [pscustomobject]@{ Port = $name; Friendly = $raw; Bluetooth = ($raw -match 'bluetooth') }
+          }
+        }
+      }
+
       Get-PnpDevice -Class Ports -PresentOnly -ErrorAction SilentlyContinue | ForEach-Object {
         $raw = "$($_.FriendlyName)"
         if ($raw -match '\((?<com>\w*[Cc][Oo][Mm]\d+)\)') {

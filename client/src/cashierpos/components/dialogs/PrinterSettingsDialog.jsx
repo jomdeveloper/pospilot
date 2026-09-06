@@ -64,6 +64,13 @@ export default function PrinterSettingsDialog() {
     })();
   }, [broker, saved]);
 
+  useEffect(() => {
+    if (form.mode === "com" && ports.length === 0 && printers.length > 0) {
+      setForm((current) => ({ ...current, mode: "driver" }));
+      setStatus("No COM port detected. Installed Windows printer(s) are available under Windows driver.");
+    }
+  }, [form.mode, ports.length, printers.length]);
+
   const set = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }));
   const setNum = (key) => (e) => setForm((f) => ({ ...f, [key]: Number(e.target.value) }));
 
@@ -100,24 +107,30 @@ export default function PrinterSettingsDialog() {
   };
 
   const doSave = async (silent) => {
-    if (!broker) { setStatus("Desktop bridge unavailable."); return; }
-    setBusy(true); setStatus("Saving…");
+    if (!broker) { setStatus("Desktop bridge unavailable."); return false; }
+    setBusy(true); setStatus("Saving");
     try {
       const res = await broker.savePrinterConfig(toConfig());
       if (res && res.ok) {
         setSaved(res.saved || {});
-        setStatus(res.exposConfigured ? "Saved ✓" : "Saved. The selected device wasn't detected.");
+        if (!silent) {
+          await new Promise((resolve) => setTimeout(resolve, 250));
+        }
         if (!silent) actions.showToast("Printer settings saved", false, "receipt");
+        if (!silent) close();
+        return true;
       } else {
         setStatus("Save failed: " + ((res && res.error) || "unknown error"));
       }
     } catch (e) { setStatus("Save error: " + ((e && e.message) || e)); }
     finally { setBusy(false); }
+    return false;
   };
 
   const doTest = async () => {
     if (!broker) return;
-    await doSave(true);
+    const savedSuccessfully = await doSave(true);
+    if (!savedSuccessfully) return;
     setBusy(true); setStatus("Sending test receipt…"); setTestPorts([]);
     try {
       const res = await broker.printTestEsPos();
@@ -145,7 +158,11 @@ export default function PrinterSettingsDialog() {
         <button type="button" className="dialog-btn dialog-btn--primary" onClick={() => doSave(false)} disabled={busy}>Save</button>
       </>
     }>
-{status && <div className="settings__status">{status}</div>}
+      {status && (
+        <div className={"settings__status" + (status === "Saving" ? " settings__status--saving" : "")}>
+          {status}
+        </div>
+      )}
 {testPorts.length > 0 && (
   <div className="settings-hint">
     <p className="settings-hint__title">Try another detected port:</p>

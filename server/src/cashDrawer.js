@@ -129,7 +129,7 @@ function storeIdentity() {
 
 function cashSalesForSession(sessionId) {
   const row = db
-    .prepare('SELECT COALESCE(SUM(cash_amount), 0) AS cash_sales, COUNT(*) AS sales_count FROM sales WHERE cashier_session_id = ?')
+    .prepare("SELECT COALESCE(SUM(cash_amount), 0) AS cash_sales, COUNT(*) AS sales_count FROM sales WHERE cashier_session_id = ? AND status NOT IN ('VOIDED', 'CANCELLED')")
     .get(sessionId);
   return { cashSales: roundMoney(Number(row.cash_sales) || 0), salesCount: Number(row.sales_count) || 0 };
 }

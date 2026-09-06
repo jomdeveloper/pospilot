@@ -53,6 +53,17 @@ export default function MoreDialog() {
       run: () => dispatchAction("closeRegister")
     },
     {
+      label: "Void Transaction",
+      desc: "Reverse a completed sale (manager approval required)",
+      danger: true,
+      run: () => actions.openDialog({ type: "transactionActions", mode: "void" })
+    },
+    {
+      label: "Refund / Return",
+      desc: "Return items from a completed sale",
+      run: () => actions.openDialog({ type: "transactionActions", mode: "refund" })
+    },
+    {
       label: "Printer Settings",
       desc: "Configure the receipt printer",
       run: () => actions.openDialog({ type: "printerSettings" })

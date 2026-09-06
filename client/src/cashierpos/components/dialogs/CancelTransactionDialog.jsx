@@ -8,22 +8,25 @@
 import React from "react";
 import { usePos } from "../../context/PosContext";
 import Dialog from "./Dialog.jsx";
-import { formatPeso } from "../../utils/calculations";
 
 export default function CancelTransactionDialog() {
-  const { state, summary, actions } = usePos();
+  const { state, actions } = usePos();
   const close = () => actions.closeDialog();
 
   const confirmCancel = () => {
-    actions.clearCart();
-    close();
-    actions.showToast("Transaction cancelled", true, "cancel");
+    actions.cancelTransaction();
+    if (state.heldSales.length === 0) close();
+    actions.showToast(
+      state.heldSales.length > 0 ? "Transaction cancelled; select a held sale" : "Transaction cancelled",
+      true,
+      state.heldSales.length > 0 ? "recall" : "cancel"
+    );
   };
 
   return (
     <Dialog
       wide
-      title="Cancel Transaction"
+      title="Cancel Transaction?"
       onClose={close}
       footer={
         <>
@@ -42,9 +45,7 @@ export default function CancelTransactionDialog() {
         </div>
         <div className="cancel__title">Are you sure?</div>
         <p className="dialog__hint cancel__desc">
-          This will remove all <strong>{summary.itemCount}</strong> item(s) currently
-          in the cart (total <strong>{formatPeso(summary.amountDue)}</strong>). This
-          cannot be undone.
+          This will remove all items from the current transaction. No sale will be recorded.
         </p>
       </div>
     </Dialog>

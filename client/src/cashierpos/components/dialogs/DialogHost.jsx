@@ -23,6 +23,7 @@ import OpenRegisterDialog from "./OpenRegisterDialog.jsx";
 import CashMovementDialog from "./CashMovementDialog.jsx";
 import CloseRegisterDialog from "./CloseRegisterDialog.jsx";
 import ItemNotFoundDialog from "./ItemNotFoundDialog.jsx";
+import TransactionActionsDialog from "./TransactionActionsDialog.jsx";
 
 export default function DialogHost() {
   const { state, runtime } = usePos();
@@ -67,6 +68,8 @@ export default function DialogHost() {
       return <PrinterSettingsDialog key="printerSettings" />;
     case "cancelTransaction":
       return <CancelTransactionDialog key="cancelTransaction" />;
+    case "transactionActions":
+      return <TransactionActionsDialog key="transactionActions" initialMode={dialog.mode || "void"} />;
     default:
       return null;
   }

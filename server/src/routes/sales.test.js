@@ -141,6 +141,72 @@ test('records a sale, decrements stock, and returns server-computed totals', asy
   assert.equal(after.stock, 47);
 });
 
+test('automatic approval is created when a sale crosses a policy threshold', async () => {
+  const db = require('../db');
+  const sampleType = db.prepare('SELECT name, category_name FROM product_types WHERE active = 1 LIMIT 1').get();
+  const product = await req(
+    'POST',
+    '/products',
+    { name: 'Threshold Item', brand: 'Test', category: sampleType.category_name, productType: sampleType.name, price: 100, stock: 10 },
+    authToken
+  );
+
+  db.prepare(
+    `INSERT INTO app_settings (id, data_json, updated_at)
+     VALUES (1, ?, datetime('now', 'localtime'))
+     ON CONFLICT(id) DO UPDATE SET data_json = excluded.data_json, updated_at = excluded.updated_at`
+  ).run(JSON.stringify({
+    storeName: 'St. Isidore\'s Pharmacy',
+    logoUrl: '',
+    address: '',
+    phone: '',
+    email: '',
+    tinNumber: '',
+    ownerName: '',
+    businessName: '',
+    branchName: '',
+    branchCode: '',
+    businessRegNumber: '',
+    dtiSecRegNumber: '',
+    birRegNumber: '',
+    website: '',
+    facebook: '',
+    tagline: '',
+    authorizedRep: '',
+    cashierManagerContact: '',
+    receiptFooter: 'Thank you for shopping with us.',
+    taxRate: '0',
+    defaultLocation: 'Main Store',
+    lowStockThreshold: '10',
+    terminalName: 'POS-02',
+    priceOverrideMaxPct: '50',
+    priceOverrideApprovalPct: '10',
+    discountApprovalPct: '10',
+    cashApprovalThreshold: '500',
+    backupDir: '',
+    idleTimeoutMinutes: '0',
+    launchOnStartup: 'false',
+  }));
+
+  const sale = await req(
+    'POST',
+    '/sales',
+    {
+      customer: 'Walk-in Customer',
+      customerType: 'walkin',
+      paymentType: 'cash',
+      cashReceived: 240,
+      items: [{ productId: product.data.id, qty: 1, discPct: 12, unitPrice: 120 }],
+    },
+    authToken
+  );
+
+  assert.equal(sale.status, 201);
+  const approvals = await req('GET', '/approvals', null, authToken);
+  assert.equal(approvals.status, 200);
+  assert.ok(approvals.data.requests.some((request) => request.type === 'price_override' || request.type === 'discount_override'));
+});
+
 test('rejects duplicate product lines and insufficient payment', async () => {
   const db = require('../db');
   const sampleType = db.prepare('SELECT name, category_name FROM product_types WHERE active = 1 LIMIT 1').get();
@@ -263,6 +329,63 @@ test('a cashier cannot deactivate another user', async () => {
   const admin = require('../db').prepare("SELECT id FROM users WHERE username = 'admin'").get();
   const res = await req('PATCH', `/users/${admin.id}/status`, { status: 'Inactive' }, cashierToken);
   assert.equal(res.status, 403);
+});
+
+test('voiding a completed sale restores inventory and cannot be repeated', async () => {
+  const db = require('../db');
+  const sampleType = db.prepare('SELECT name, category_name FROM product_types WHERE active = 1 LIMIT 1').get();
+  const product = await req('POST', '/products', {
+    name: 'Void Lifecycle Item', brand: 'Test', category: sampleType.category_name,
+    productType: sampleType.name, price: 80, stock: 10,
+  }, authToken);
+  const sale = await req('POST', '/sales', {
+    items: [{ productId: product.data.id, qty: 2, unitPrice: 80 }],
+    cashReceived: 160,
+  }, authToken);
+  assert.equal(sale.status, 201);
+  assert.equal(db.prepare('SELECT stock FROM products WHERE id = ?').get(product.data.id).stock, 8);
+
+  const voided = await req('POST', `/sales/${sale.data.id}/void`, { reason: 'Wrong quantity' }, authToken);
+  assert.equal(voided.status, 200);
+  assert.equal(voided.data.status, 'VOIDED');
+  assert.equal(db.prepare('SELECT stock FROM products WHERE id = ?').get(product.data.id).stock, 10);
+  assert.equal(db.prepare('SELECT status FROM sales WHERE id = ?').get(sale.data.id).status, 'VOIDED');
+
+  const duplicate = await req('POST', `/sales/${sale.data.id}/void`, { reason: 'Wrong quantity' }, authToken);
+  assert.equal(duplicate.status, 409);
+});
+
+test('returns advance sale status and prevent returning beyond purchased quantity', async () => {
+  const db = require('../db');
+  const sampleType = db.prepare('SELECT name, category_name FROM product_types WHERE active = 1 LIMIT 1').get();
+  const product = await req('POST', '/products', {
+    name: 'Refund Lifecycle Item', brand: 'Test', category: sampleType.category_name,
+    productType: sampleType.name, price: 60, stock: 10,
+  }, authToken);
+  const sale = await req('POST', '/sales', {
+    items: [{ productId: product.data.id, qty: 2, unitPrice: 60 }],
+    cashReceived: 120,
+  }, authToken);
+  const detail = await req('GET', `/sales/${sale.data.id}`, null, authToken);
+  const itemId = detail.data.items[0].id;
+
+  const partial = await req('POST', `/sales/${sale.data.id}/return`, {
+    items: [{ itemId, quantity: 1 }], reason: 'Customer return', refundMethod: 'cash',
+  }, authToken);
+  assert.equal(partial.status, 201);
+  assert.equal(partial.data.status, 'PARTIALLY_REFUNDED');
+
+  const full = await req('POST', `/sales/${sale.data.id}/return`, {
+    items: [{ itemId, quantity: 1 }], reason: 'Customer return', refundMethod: 'cash',
+  }, authToken);
+  assert.equal(full.status, 201);
+  assert.equal(full.data.status, 'FULLY_REFUNDED');
+  assert.equal(db.prepare('SELECT status FROM sales WHERE id = ?').get(sale.data.id).status, 'FULLY_REFUNDED');
+
+  const duplicate = await req('POST', `/sales/${sale.data.id}/return`, {
+    items: [{ itemId, quantity: 1 }], reason: 'Duplicate return', refundMethod: 'cash',
+  }, authToken);
+  assert.equal(duplicate.status, 409);
 });
 
 test('logging out invalidates the session token', async () => {

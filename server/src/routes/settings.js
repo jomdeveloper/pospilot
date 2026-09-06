@@ -35,6 +35,13 @@ const DEFAULTS = {
   // How much a cashier may raise a unit price above the catalog price (in %).
   // Any override beyond this is rejected with a 403. 0 disables overrides.
   priceOverrideMaxPct: '50',
+  // Trigger manager approval once a price override exceeds this percentage, even
+  // if it remains under the absolute override cap.
+  priceOverrideApprovalPct: '10',
+  // Trigger manager approval once a line discount passes this percentage.
+  discountApprovalPct: '10',
+  // Raise a manager request when a sale exceeds this total amount.
+  cashApprovalThreshold: '500',
   // Where automatic database backups go. Empty = next to the database
   // (`server/data/backups` in dev, `%APPDATA%/pospilot/data/backups` packaged).
   // Can point at a network share or second drive for off-machine redundancy.

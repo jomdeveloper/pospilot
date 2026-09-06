@@ -2,7 +2,7 @@ import {
   LayoutDashboard, Package, Boxes, Tags, Truck, Users,
   ClipboardList, ArrowLeftRight, SlidersHorizontal, Repeat, Store,
   Receipt, RotateCcw, BarChart3, UserCog, ShieldCheck, Settings,
-  PackageCheck,
+  PackageCheck, FileCheck2,
 } from "lucide-react";
 
 export const NAV_SECTIONS = [
@@ -45,6 +45,7 @@ export const NAV_SECTIONS = [
     items: [
       { id: "reports", label: "Reports", icon: BarChart3 },
       { id: "users", label: "Users", icon: UserCog, roles: ["administrator", "admin"] },
+      { id: "approvals", label: "Approvals", icon: FileCheck2, roles: ["administrator", "admin", "manager"] },
       { id: "audit", label: "Audit Logs", icon: ShieldCheck, roles: ["administrator", "admin", "auditor"] },
       { id: "settings", label: "Settings", icon: Settings },
     ],

@@ -33,6 +33,7 @@ const KEY_ACTIONS = {
   F4: "discount",
   F5: "priceCheck",
   F6: "hold",
+  F12: "pause",
   F7: "recall",
   F10: "more"               // F10 More
 };
@@ -315,6 +316,8 @@ function PosApp() {
   useKeyboardShortcuts();
   useBarcodeCapture();
   const { state, dispatchAction, runtime } = usePos();
+  const localOnly = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
+  const networkStatus = localOnly ? "Offline · Local only" : "Lan connected";
   // The footer's transaction number follows the ACTIVE transaction. After a
   // recalled sale, `saleNumber` was restored to the held sale's own invoice
   // number by the reducer — so this shows SI-000003, not the advanced counter.
@@ -328,6 +331,12 @@ function PosApp() {
         <div className="pos-frame pos-frame--gate">
           <PosHeader />
           <RegisterGate />
+          <footer className="pos-footer pos-footer--gate">
+            <span className={localOnly ? "pos-footer__offline" : "pos-footer__online"}>
+              {networkStatus}
+            </span>
+            <span>Register Locked</span>
+          </footer>
         </div>
         <Toast />
         <DialogHost />
@@ -354,6 +363,9 @@ function PosApp() {
               ) : (
                 "Register Closed"
               )}
+              <span className={localOnly ? "pos-footer__offline" : "pos-footer__online"}>
+                {" · " + networkStatus}
+              </span>
             </span>
             <span className="pos-footer__actions">
               <button type="button" className="pos-footer__link" onClick={() => dispatchAction("cashIn")}>

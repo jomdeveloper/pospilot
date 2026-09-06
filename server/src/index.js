@@ -18,6 +18,8 @@ const barcodeScansRouter = require('./routes/barcodeScans');
 const inventoryRouter = require('./routes/inventory');
 const cashierSessionsRouter = require('./routes/cashierSessions');
 const backupRouter = require('./routes/backup');
+const approvalsRouter = require('./routes/approvals');
+const pendingSalesRouter = require('./routes/pendingSales');
 const { scheduleBackups } = require('./backup');
 const { securityHeaders } = require('./security');
 const db = require('./db');
@@ -79,6 +81,8 @@ function createServer() {
   app.use('/api/barcode-scans', barcodeScansRouter);
   app.use('/api/inventory', inventoryRouter);
   app.use('/api/cashier-sessions', cashierSessionsRouter);
+  app.use('/api/approvals', approvalsRouter);
+  app.use('/api/pending-sales', pendingSalesRouter);
   app.use('/api/backups', backupRouter);
 
   // JSON 404 for any unmatched /api route (any HTTP method).

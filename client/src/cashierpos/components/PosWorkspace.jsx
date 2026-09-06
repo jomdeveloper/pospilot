@@ -11,6 +11,7 @@ import React from "react";
 import { usePos } from "../context/PosContext";
 import BarcodeSearch from "./BarcodeSearch.jsx";
 import TransactionTable from "./TransactionTable.jsx";
+import Icon from "./Icon.jsx";
 import { getStoreLogo, PHARMACY } from "../data/storeConfig";
 
 export default function PosWorkspace() {
@@ -22,6 +23,10 @@ export default function PosWorkspace() {
     actions.pressButton("newTransaction");
     actions.startTransaction();
     actions.showToast("New transaction started", false, "success");
+  };
+
+  const recallTransaction = () => {
+    actions.openDialog({ type: "recall" });
   };
 
   const resume = () => {
@@ -70,14 +75,27 @@ export default function PosWorkspace() {
             <br />
             Press <strong>New Transaction</strong> to begin.
           </p>
-          <button
-            type="button"
-            className="standby__new"
-            onClick={newTransaction}
-            title="Start a new sale"
-          >
-            + New Transaction
-          </button>
+          <div className="standby__actions">
+            {state.heldSales.length > 0 && (
+              <button
+                type="button"
+                className="standby__new standby__recall"
+                onClick={recallTransaction}
+                title="Recall a held transaction"
+              >
+                <span className="standby__icon"><Icon name="recall" /></span>
+                Recall Transaction <span className="standby__count">{state.heldSales.length}</span>
+              </button>
+            )}
+            <button
+              type="button"
+              className="standby__new"
+              onClick={newTransaction}
+              title="Start a new sale"
+            >
+              + New Transaction
+            </button>
+          </div>
         </div>
       </section>
     );

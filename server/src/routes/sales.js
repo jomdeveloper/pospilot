@@ -10,6 +10,31 @@ const router = express.Router();
 const SENIOR_PWD_DISCOUNT_RATE = 0.2; // 20% per R.A. 9994 / Magna Carta for PWDs
 const VAT_RATE = 0.12; // 12% output VAT (R.A. 8424 as amended) — shelf prices are VAT-inclusive
 
+function createAutoApprovalRequest(req, payload) {
+  const details = payload.details && typeof payload.details === 'object' ? payload.details : {};
+  if (!req?.session?.userId || !payload?.type || !payload?.reason) return null;
+
+  const result = db.prepare(`
+    INSERT INTO approval_requests (
+      type, title, reason, details_json, status, requested_by_user_id,
+      requested_by_username, entity_id, request_ref
+    ) VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?)
+  `).run(
+    payload.type,
+    payload.title || 'Policy exception',
+    payload.reason,
+    JSON.stringify(details),
+    req.session.userId,
+    req.session.username,
+    payload.entityId || null,
+    `APR-${Date.now()}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`
+  );
+
+  const created = db.prepare('SELECT * FROM approval_requests WHERE id = ?').get(result.lastInsertRowid);
+  auditLog(req, 'Submitted approval request', 'ApprovalRequest', created.id, { type: payload.type, title: created.title, reason: payload.reason });
+  return created;
+}
+
 /** Split a VAT-inclusive amount into its VAT and VAT-exclusive parts. */
 function splitVat(inclusive) {
   const vat = roundMoney((inclusive * VAT_RATE) / (1 + VAT_RATE));
@@ -36,10 +61,17 @@ router.post('/', authenticate, (req, res) => {
   const customerType = String(body.customerType || 'Walk-in').trim().toLowerCase();
   const isSeniorOrPwd = customerType === 'senior' || customerType === 'pwd';
 
+  const settings = getSettings();
   // Cashier price overrides are capped: a line may only be sold within N percent
   // above its catalog price (configured in Settings). 0 fully disables overrides.
-  let priceOverrideMaxPct = Number(getSettings().priceOverrideMaxPct);
+  let priceOverrideMaxPct = Number(settings.priceOverrideMaxPct);
+  let priceOverrideApprovalPct = Number(settings.priceOverrideApprovalPct);
+  let discountApprovalPct = Number(settings.discountApprovalPct);
+  let cashApprovalThreshold = Number(settings.cashApprovalThreshold);
   if (!Number.isFinite(priceOverrideMaxPct) || priceOverrideMaxPct < 0) priceOverrideMaxPct = 50;
+  if (!Number.isFinite(priceOverrideApprovalPct) || priceOverrideApprovalPct < 0) priceOverrideApprovalPct = 0;
+  if (!Number.isFinite(discountApprovalPct) || discountApprovalPct < 0) discountApprovalPct = 0;
+  if (!Number.isFinite(cashApprovalThreshold) || cashApprovalThreshold < 0) cashApprovalThreshold = 0;
 
   // Normalize + validate each line.
   const lines = [];
@@ -76,6 +108,34 @@ router.post('/', authenticate, (req, res) => {
           error: `Unit price exceeds the allowed override of ${priceOverrideMaxPct}% above the catalog price for ${product.name}`,
         });
       }
+      if (priceOverrideApprovalPct > 0 && pctAbove >= priceOverrideApprovalPct) {
+        createAutoApprovalRequest(req, {
+          type: 'price_override',
+          title: `Price override for ${product.name}`,
+          reason: `Cashier requested a ${pctAbove.toFixed(1)}% price increase above catalog for ${product.name}.`,
+          details: {
+            productId: product.id,
+            productName: product.name,
+            catalogPrice: originalPrice,
+            overridePrice: unitPrice,
+            overridePercent: pctAbove,
+          },
+        });
+      }
+    }
+
+    if (discPct > 0 && discountApprovalPct > 0 && discPct >= discountApprovalPct) {
+      createAutoApprovalRequest(req, {
+        type: 'discount_override',
+        title: `Discount override for ${product.name}`,
+        reason: `Cashier applied a ${discPct}% line discount on ${product.name}.`,
+        details: {
+          productId: product.id,
+          productName: product.name,
+          discountPercent: discPct,
+          quantity: qty,
+        },
+      });
     }
 
     const lineSubtotal = roundMoney(qty * unitPrice);
@@ -113,6 +173,20 @@ router.post('/', authenticate, (req, res) => {
   const grandTotal = roundMoney(Math.max(subtotal - discountTotal, 0));
 
   const paymentType = String(body.paymentType || body.method || 'cash').trim() || 'cash';
+
+  if (cashApprovalThreshold > 0 && grandTotal >= cashApprovalThreshold) {
+    createAutoApprovalRequest(req, {
+      type: 'cash_exception',
+      title: 'Cash transaction above approval threshold',
+      reason: `Transaction total reached ${grandTotal} which exceeds the configured cash approval threshold of ${cashApprovalThreshold}.`,
+      details: {
+        saleTotal: grandTotal,
+        paymentType,
+        customerName: String(body.customer || 'Walk-in Customer').trim() || 'Walk-in Customer',
+        memberId: String(body.memberId || '').trim() || null,
+      },
+    });
+  }
   const paymentTypes = ['cash', 'card', 'gcash', 'maya', 'bank', 'credit', 'other'];
   if (!paymentTypes.includes(paymentType.toLowerCase())) {
     return res.status(400).json({ error: 'Unsupported payment type' });
@@ -319,7 +393,8 @@ router.post('/', authenticate, (req, res) => {
 router.get('/', authenticate, (req, res) => {
   const rows = db.prepare(`
     SELECT s.*, COALESCE(SUM(si.qty), 0) AS item_count,
-      COALESCE(SUM(si.qty - COALESCE(si.returned_qty, 0)), 0) AS returnable_count
+      COALESCE(SUM(si.qty - COALESCE(si.returned_qty, 0)), 0) AS returnable_count,
+      (SELECT COALESCE(SUM(sr.refund_amount), 0) FROM sale_returns sr WHERE sr.sale_id = s.id) AS refunded_total
     FROM sales s LEFT JOIN sale_items si ON si.sale_id = s.id
     GROUP BY s.id ORDER BY s.id DESC LIMIT 100
   `).all();
@@ -356,13 +431,84 @@ router.get('/:id', authenticate, (req, res) => {
   res.json({ ...sale, items });
 });
 
+router.post('/:id/void', authenticate, (req, res) => {
+  const saleId = Number(req.params.id);
+  const reason = String(req.body?.reason || '').trim();
+  const description = String(req.body?.description || '').trim() || null;
+  if (!Number.isInteger(saleId) || saleId <= 0 || !reason) {
+    return res.status(400).json({ error: 'Sale and void reason are required' });
+  }
+  if (reason.toLowerCase() === 'other' && !description) {
+    return res.status(400).json({ error: 'A description is required when the void reason is Other' });
+  }
+  const role = String(req.session?.role || '').trim().toLowerCase();
+  if (!['administrator', 'admin', 'manager'].includes(role)) {
+    return res.status(403).json({ error: 'You do not have permission to void completed transactions' });
+  }
+
+  try {
+    const result = db.transaction(() => {
+      const sale = db.prepare('SELECT * FROM sales WHERE id = ?').get(saleId);
+      if (!sale) throw Object.assign(new Error('Sale not found'), { status: 404 });
+      if (sale.status === 'VOIDED') throw Object.assign(new Error('This transaction has already been voided.'), { status: 409 });
+      if (sale.status !== 'COMPLETED') {
+        throw Object.assign(new Error('Only completed transactions can be voided.'), { status: 409 });
+      }
+      if (db.prepare('SELECT id FROM sale_voids WHERE sale_id = ?').get(saleId)) {
+        throw Object.assign(new Error('This transaction has already been voided.'), { status: 409 });
+      }
+
+      const items = db.prepare('SELECT * FROM sale_items WHERE sale_id = ?').all(saleId);
+      const mainLocationId = db.prepare("SELECT id FROM inventory_locations WHERE name = 'Main Store'").get()?.id;
+      const updateProduct = db.prepare('UPDATE products SET stock = stock + ? WHERE id = ?');
+      const ensureLocation = db.prepare('INSERT OR IGNORE INTO inventory_location_stock (location_id, product_id, quantity) SELECT ?, id, stock FROM products WHERE id = ?');
+      const updateLocation = db.prepare('UPDATE inventory_location_stock SET quantity = quantity + ? WHERE location_id = ? AND product_id = ?');
+      const insertMovement = db.prepare(`INSERT INTO inventory_movements (movement_type, product_id, quantity, to_location_id, reason, reference, actor_user_id, actor_username) VALUES ('Void', ?, ?, ?, ?, ?, ?, ?)`);
+
+      for (const item of items) {
+        const product = item.product_id ? db.prepare('SELECT track_inventory FROM products WHERE id = ?').get(item.product_id) : null;
+        if (!product?.track_inventory) continue;
+        ensureLocation.run(mainLocationId, item.product_id);
+        updateProduct.run(item.qty, item.product_id);
+        updateLocation.run(item.qty, mainLocationId, item.product_id);
+        insertMovement.run(item.product_id, item.qty, mainLocationId, reason, `Sale #${saleId}`, req.session.userId, req.session.username);
+      }
+
+      db.prepare("UPDATE sales SET status = 'VOIDED' WHERE id = ? AND status IN ('COMPLETED', 'PARTIALLY_REFUNDED')").run(saleId);
+      db.prepare(`INSERT INTO sale_voids (sale_id, reason, description, voided_by_user_id, voided_by_username, approved_by_user_id, approved_by_username)
+        VALUES (?, ?, ?, ?, ?, ?, ?)`)
+        .run(saleId, reason, description, req.session.userId, req.session.username, req.session.userId, req.session.username);
+      if (sale.cashier_session_id) require('../cashDrawer').refreshSessionTotals(sale.cashier_session_id);
+      auditLog(req, 'TRANSACTION_VOIDED', 'Sale', saleId, {
+        transactionRef: sale.transaction_ref,
+        reason,
+        description,
+        originalAmount: sale.grand_total,
+        paymentType: sale.payment_type,
+        cashAmount: sale.cash_amount,
+        itemCount: items.length,
+      });
+      return { saleId, transactionRef: sale.transaction_ref, originalAmount: sale.grand_total, status: 'VOIDED' };
+    })();
+    return res.status(200).json({ ok: true, ...result });
+  } catch (error) {
+    return res.status(error.status || 400).json({ error: error.message || 'Unable to void transaction' });
+  }
+});
+
 router.post('/:id/return', authenticate, (req, res) => {
   const saleId = Number(req.params.id);
   const reason = String(req.body?.reason || '').trim();
   const rawItems = Array.isArray(req.body?.items) ? req.body.items : [];
   if (!Number.isInteger(saleId) || !reason || rawItems.length === 0) return res.status(400).json({ error: 'Sale, return reason, and at least one item are required' });
-  const sale = db.prepare('SELECT id FROM sales WHERE id = ?').get(saleId);
+  const sale = db.prepare('SELECT * FROM sales WHERE id = ?').get(saleId);
   if (!sale) return res.status(404).json({ error: 'Sale not found' });
+  if (sale.status === 'VOIDED') return res.status(409).json({ error: 'Voided transactions cannot be refunded.' });
+  if (sale.status === 'FULLY_REFUNDED') return res.status(409).json({ error: 'This transaction has already been fully refunded.' });
+  const refundMethod = String(req.body?.refundMethod || 'cash').trim().toLowerCase();
+  if (!['cash', 'card', 'gcash', 'maya', 'bank', 'credit', 'other'].includes(refundMethod)) {
+    return res.status(400).json({ error: 'Unsupported refund method' });
+  }
   const items = rawItems.map((item) => ({ itemId: Number(item.itemId), quantity: Number(item.quantity) }));
   if (items.some((item) => !Number.isInteger(item.itemId) || !Number.isInteger(item.quantity) || item.quantity < 1)) return res.status(400).json({ error: 'Each return item needs a valid quantity' });
   const itemIds = new Set();
@@ -380,7 +526,7 @@ router.post('/:id/return', authenticate, (req, res) => {
       const ensureLocation = db.prepare('INSERT OR IGNORE INTO inventory_location_stock (location_id, product_id, quantity) SELECT ?, id, stock FROM products WHERE id = ?');
       const updateLocation = db.prepare('UPDATE inventory_location_stock SET quantity = quantity + ? WHERE location_id = ? AND product_id = ?');
       const insertMovement = db.prepare(`INSERT INTO inventory_movements (movement_type, product_id, quantity, to_location_id, reason, reference, actor_user_id, actor_username) VALUES ('Return', ?, ?, ?, ?, ?, ?, ?)`);
-      const insertReturn = db.prepare('INSERT INTO sale_returns (sale_id, product_id, quantity, refund_amount, reason, actor_user_id, actor_username) VALUES (?, ?, ?, ?, ?, ?, ?)');
+      const insertReturn = db.prepare('INSERT INTO sale_returns (sale_id, product_id, quantity, refund_amount, reason, refund_method, actor_user_id, actor_username) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
       let refundTotal = 0;
       items.forEach(({ itemId, quantity }) => {
         const item = getItem.get(itemId, saleId);
@@ -398,16 +544,19 @@ router.post('/:id/return', authenticate, (req, res) => {
           updateLocation.run(quantity, mainLocationId, item.product_id);
           insertMovement.run(item.product_id, quantity, mainLocationId, reason, `Sale #${saleId}`, req.session.userId, req.session.username);
         }
-        insertReturn.run(saleId, item.product_id, quantity, refundAmount, reason, req.session.userId, req.session.username);
+        insertReturn.run(saleId, item.product_id, quantity, refundAmount, reason, refundMethod, req.session.userId, req.session.username);
       });
-      auditLog(req, 'Returned sale items', 'Sale', saleId, { reason, refundTotal, itemCount: items.length });
+      const remaining = db.prepare('SELECT COALESCE(SUM(qty - COALESCE(returned_qty, 0)), 0) AS remaining FROM sale_items WHERE sale_id = ?').get(saleId);
+      const nextStatus = Number(remaining.remaining) === 0 ? 'FULLY_REFUNDED' : 'PARTIALLY_REFUNDED';
+      db.prepare('UPDATE sales SET status = ? WHERE id = ? AND status IN (\'COMPLETED\', \'PARTIALLY_REFUNDED\')').run(nextStatus, saleId);
+      auditLog(req, nextStatus === 'FULLY_REFUNDED' ? 'TRANSACTION_REFUNDED' : 'TRANSACTION_PARTIALLY_REFUNDED', 'Sale', saleId, { reason, refundTotal, refundMethod, itemCount: items.length, originalAmount: sale.grand_total });
       // If the refunded sale took physical cash from a cashier drawer,
       // refresh that session's totals so cash_refunds / expected cash move.
       const sessionLink = db.prepare('SELECT cashier_session_id FROM sales WHERE id = ?').get(saleId);
       if (sessionLink && sessionLink.cashier_session_id) {
         require('../cashDrawer').refreshSessionTotals(sessionLink.cashier_session_id);
       }
-      return { refundTotal };
+      return { refundTotal, status: nextStatus };
     })();
     return res.status(201).json({ ok: true, saleId, ...result });
   } catch (error) {

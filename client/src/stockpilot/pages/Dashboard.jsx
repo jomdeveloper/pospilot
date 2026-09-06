@@ -44,8 +44,8 @@ export default function Dashboard({ t }) {
   });
   const today = new Date().toDateString();
   const salesToday = sales.filter((sale) => new Date(sale.created_at).toDateString() === today);
-  const totalSalesToday = salesToday.reduce((sum, sale) => sum + Number(sale.grand_total || 0), 0);
-  const monthlySales = sales.reduce((sum, sale) => sum + Number(sale.grand_total || 0), 0);
+  const totalSalesToday = salesToday.filter((sale) => sale.status !== "VOIDED" && sale.status !== "CANCELLED").reduce((sum, sale) => sum + Number(sale.grand_total || 0) - Number(sale.refunded_total || 0), 0);
+  const monthlySales = sales.filter((sale) => sale.status !== "VOIDED" && sale.status !== "CANCELLED").reduce((sum, sale) => sum + Number(sale.grand_total || 0) - Number(sale.refunded_total || 0), 0);
 
   const categoryDist = useMemo(() => {
     const totals = new Map();

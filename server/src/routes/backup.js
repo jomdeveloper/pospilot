@@ -3,7 +3,7 @@ const fs = require('fs');
 const express = require('express');
 const { requireAdministrator } = require('./auth');
 const { auditLog } = require('../audit');
-const { createBackup, listBackups, safeResolve, testBackupDir } = require('../backup');
+const { createBackup, listBackups, restoreBackup, safeResolve, testBackupDir } = require('../backup');
 
 const router = express.Router();
 
@@ -38,6 +38,23 @@ router.get('/:name/download', requireAdministrator, (req, res) => {
     return res.status(404).json({ error: 'Backup not found' });
   }
   res.download(filePath, path.basename(filePath));
+});
+
+// POST /api/backups/:name/restore — restore a database snapshot (admin only)
+router.post('/:name/restore', requireAdministrator, (req, res) => {
+  try {
+    const result = restoreBackup(req.params.name);
+    auditLog(req, 'Restored database backup', 'Backup', result.filename, {
+      source: result.path,
+      safetyFile: result.safetyFile,
+      restoredAt: result.restoredAt,
+    });
+    res.json({ ok: true, backup: { filename: result.filename, path: result.path, restoredAt: result.restoredAt } });
+  } catch (error) {
+    const message = (error && error.message) || 'Unable to restore backup';
+    const status = /Close PosPilot|Could not restore|not found/i.test(message) ? 409 : 500;
+    res.status(status).json({ error: message });
+  }
 });
 
 module.exports = router;

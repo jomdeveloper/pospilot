@@ -88,6 +88,22 @@ test('an administrator can create, list, and download a backup', async () => {
   assert.ok(bytes.includes(Buffer.from('SQLite format 3')));
 });
 
+test('an administrator can restore a database snapshot', async () => {
+  const created = await req('POST', '/backups', null, adminToken);
+  assert.equal(created.status, 201);
+  const snapshot = created.data.backup.filename;
+  assert.ok(snapshot);
+
+  const restored = await req('POST', `/backups/${encodeURIComponent(snapshot)}/restore`, null, adminToken);
+  assert.equal(restored.status, 200);
+  assert.equal(restored.data.ok, true);
+  assert.equal(restored.data.backup.filename, snapshot);
+
+  const listed = await req('GET', '/backups', null, adminToken);
+  assert.equal(listed.status, 200);
+  assert.ok(listed.data.backups.some((item) => item.filename === snapshot));
+});
+
 test('path traversal in backup downloads is rejected', async () => {
   // Unauthenticated traversal attempt is rejected before any file access.
   const anon = await req('GET', '/backups/..%2F..%2Fsecret.db/download');

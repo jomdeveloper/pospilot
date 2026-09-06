@@ -106,6 +106,80 @@ test('catalog metadata and categories are protected by authentication', async ()
   assert.equal(categories.status, 200);
 });
 
+test('approval requests can be raised and reviewed through the manager queue', async () => {
+  const created = await req('POST', '/approvals', {
+    type: 'override',
+    title: 'Manual price override',
+    reason: 'Customer service request for urgent sale',
+    details: { saleId: 42, requestedDiscount: 15 },
+  }, adminToken);
+  assert.equal(created.status, 201);
+  assert.equal(created.data.request.status, 'pending');
+
+  const list = await req('GET', '/approvals', null, adminToken);
+  assert.equal(list.status, 200);
+  assert.ok(list.data.requests.some((request) => request.id === created.data.request.id));
+
+  const reviewed = await req('PATCH', `/approvals/${created.data.request.id}`, {
+    status: 'approved',
+    reviewNote: 'Approved under manager authority',
+  }, adminToken);
+  assert.equal(reviewed.status, 200);
+  assert.equal(reviewed.data.request.status, 'approved');
+  assert.equal(reviewed.data.request.reviewedByUsername, 'admin');
+  assert.equal(reviewed.data.request.reviewNote, 'Approved under manager authority');
+});
+
+test('pending sales can be created and recalled across a cashier session', async () => {
+  const openSession = await req('POST', '/cashier-sessions', {
+    terminal: 'POS-RESTORE',
+    openingFloat: 1000,
+  }, adminToken);
+  assert.equal(openSession.status, 201);
+
+  const created = await req('POST', '/pending-sales', {
+    cashierSessionId: openSession.data.session.id,
+    customerName: 'Maria Santos',
+    customerType: 'senior',
+    memberId: 'MS-001',
+    payload: {
+      cart: [{ id: 1, sku: 'A100', qty: 2, price: 150 }],
+      discountPct: 10,
+      customerType: 'senior',
+    },
+  }, adminToken);
+  assert.equal(created.status, 201);
+  assert.equal(created.data.pendingSale.customerName, 'Maria Santos');
+
+  const list = await req('GET', '/pending-sales', null, adminToken);
+  assert.equal(list.status, 200);
+  assert.ok(list.data.pendingSales.some((sale) => sale.id === created.data.pendingSale.id));
+
+  const recalled = await req('PATCH', `/pending-sales/${created.data.pendingSale.id}/recall`, null, adminToken);
+  assert.equal(recalled.status, 200);
+  assert.equal(recalled.data.pendingSale.status, 'in_progress');
+
+  const completed = await req('PATCH', `/pending-sales/${created.data.pendingSale.id}/complete`, null, adminToken);
+  assert.equal(completed.status, 200);
+  assert.equal(completed.data.pendingSale.status, 'completed');
+
+  const afterRecall = await req('GET', '/pending-sales', null, adminToken);
+  assert.equal(afterRecall.status, 200);
+  assert.equal(afterRecall.data.pendingSales.some((sale) => sale.id === created.data.pendingSale.id), false);
+
+  const second = await req('POST', '/pending-sales', {
+    cashierSessionId: openSession.data.session.id,
+    customerName: 'Cancelled Hold',
+    payload: { cart: [{ id: 1, qty: 1, price: 10 }] },
+  }, adminToken);
+  assert.equal(second.status, 201);
+  const secondRecall = await req('PATCH', `/pending-sales/${second.data.pendingSale.id}/recall`, null, adminToken);
+  assert.equal(secondRecall.status, 200);
+  const cancelled = await req('PATCH', `/pending-sales/${second.data.pendingSale.id}/cancel`, null, adminToken);
+  assert.equal(cancelled.status, 200);
+  assert.equal(cancelled.data.pendingSale.status, 'cancelled');
+});
+
 test('security headers are present on API responses', async () => {
   const res = await fetch(`${baseUrl}/api/health`);
   assert.equal(res.headers.get('x-content-type-options'), 'nosniff');

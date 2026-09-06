@@ -166,6 +166,23 @@ export default function SettingsPage({ t, sessionToken }) {
     }
   };
 
+  const restoreBackup = async (filename, event) => {
+    event.preventDefault();
+    if (!sessionToken || backupBusy) return;
+    setBackupBusy(true);
+    setBackupError("");
+    try {
+      const result = await api.restoreBackupFile(filename, sessionToken);
+      notify(result && result.ok ? `Database restored from ${filename}.` : "Database restored.");
+      api.listBackups(sessionToken).then(applyBackups).catch(() => {});
+    } catch (requestError) {
+      setBackupError((requestError && requestError.message) || "Unable to restore backup.");
+      notify("Restore failed.", "error");
+    } finally {
+      setBackupBusy(false);
+    }
+  };
+
   const formatBytes = (bytes) => {
     if (!Number.isFinite(bytes)) return "";
     if (bytes < 1024) return `${bytes} B`;
@@ -401,6 +418,9 @@ return (
             {textArea("receiptFooter", "Receipt / invoice footer message")}
             {field("taxRate", "Tax rate (%)", "number", "0")}
             {field("priceOverrideMaxPct", "Max price override (%)", "number", "50")}
+            {field("priceOverrideApprovalPct", "Approval trigger for price override (%)", "number", "10")}
+            {field("discountApprovalPct", "Approval trigger for discount (%)", "number", "10")}
+            {field("cashApprovalThreshold", "Approval trigger for sale total (₱)", "number", "500")}
             {field("defaultLocation", "Default location", "text", "Main Store")}
             {field("lowStockThreshold", "Low stock threshold", "number", "10")}
             {field("terminalName", "POS terminal name", "text", "POS-02")}
@@ -462,6 +482,9 @@ return (
                   <span style={{ color: t.text }}>{backup.filename}</span>
                   <span className="shrink-0 flex items-center gap-2">
                     <span style={{ color: t.sub }}>{formatBytes(backup.size)}</span>
+                    <Button t={t} type="button" variant="outline" onClick={(event) => restoreBackup(backup.filename, event)} disabled={backupBusy}>
+                      <RotateCcw size={13} /> Restore
+                    </Button>
                     <Button t={t} type="button" variant="outline" onClick={(event) => downloadBackup(backup.filename, event)} disabled={backupBusy}>
                       <Download size={13} /> Download
                     </Button>

@@ -110,6 +110,12 @@ export const api = {
 
   getSale: (id) => request(`/sales/${id}`),
 
+  voidSale: (id, payload, authToken) => request(`/sales/${encodeURIComponent(id)}/void`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+    authToken,
+  }),
+
   returnSale: (id, payload, authToken) => request(`/sales/${id}/return`, {
     method: 'POST',
     body: JSON.stringify(payload),
@@ -232,6 +238,9 @@ export const api = {
   testBackupDir: (dir, authToken) =>
     request('/backups/test-dir', { method: 'POST', body: JSON.stringify({ dir }), authToken }),
 
+  restoreBackupFile: (name, authToken) =>
+    request(`/backups/${encodeURIComponent(name)}/restore`, { method: 'POST', authToken }),
+
   revokeAllSessions: (authToken) => request('/auth/revoke-all', { method: 'POST', authToken }),
 
   downloadBackupFile: async (name, authToken) => {
@@ -247,6 +256,32 @@ export const api = {
     }
     return res.blob();
   },
+
+  // ------------------------------------------------------------------
+  //  Manager approval queue for exceptions / overrides / review workflow
+  // ------------------------------------------------------------------
+  getApprovalRequests: (params = {}, authToken) =>
+    request(`/approvals${toQueryString(params)}`, { authToken }),
+
+  createApprovalRequest: (payload, authToken) =>
+    request('/approvals', { method: 'POST', body: JSON.stringify(payload), authToken }),
+
+  updateApprovalRequest: (id, payload, authToken) =>
+    request(`/approvals/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(payload), authToken }),
+
+  getPendingSales: (authToken) => request('/pending-sales', { authToken }),
+
+  createPendingSale: (payload, authToken) =>
+    request('/pending-sales', { method: 'POST', body: JSON.stringify(payload), authToken }),
+
+  recallPendingSale: (id, authToken) =>
+    request(`/pending-sales/${encodeURIComponent(id)}/recall`, { method: 'PATCH', authToken }),
+
+  completePendingSale: (id, authToken) =>
+    request(`/pending-sales/${encodeURIComponent(id)}/complete`, { method: 'PATCH', authToken }),
+
+  cancelPendingSale: (id, authToken) =>
+    request(`/pending-sales/${encodeURIComponent(id)}/cancel`, { method: 'PATCH', authToken }),
 
   // ------------------------------------------------------------------
   //  Cash Float / Opening Cash — cashier sessions & drawer management

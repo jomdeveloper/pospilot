@@ -13,6 +13,7 @@ import SuppliersPage from "./pages/Suppliers";
 import CustomersPage from "./pages/Customers";
 import ComingSoonPage from "./pages/ComingSoon";
 import AuditLogsPage from "./pages/AuditLogs";
+import ApprovalsPage from "./pages/Approvals";
 import StockMovementsPage from "./pages/StockMovements";
 import StockAdjustmentPage from "./pages/StockAdjustment";
 import TransfersPage from "./pages/Transfers";
@@ -50,7 +51,7 @@ export default function StockPilotApp({ loggedInUser, loggedInRole, sessionToken
       case "adjustment": return <StockAdjustmentPage t={t} sessionToken={sessionToken} />;
       case "transfers": return <TransfersPage t={t} sessionToken={sessionToken} />;
       case "pos": return <POSPage t={t} sessionToken={sessionToken} />;
-      case "sales": return <SalesPage t={t} />;
+      case "sales": return <SalesPage t={t} sessionToken={sessionToken} loggedInRole={loggedInRole} />;
       case "returns": return <ReturnsPage t={t} sessionToken={sessionToken} />;
       case "reports": return <ReportsPage t={t} />;
       case "settings": return <SettingsPage t={t} sessionToken={sessionToken} />;
@@ -60,6 +61,7 @@ export default function StockPilotApp({ loggedInUser, loggedInRole, sessionToken
       case "categories": return <CategoriesPage t={t} sessionToken={sessionToken} loggedInRole={loggedInRole} />;
       case "suppliers": return <SuppliersPage t={t} sessionToken={sessionToken} loggedInRole={loggedInRole} />;
       case "customers": return <CustomersPage t={t} />;
+      case "approvals": return <ApprovalsPage t={t} sessionToken={sessionToken} loggedInRole={loggedInRole} />;
       case "audit": return <AuditLogsPage t={t} sessionToken={sessionToken} />;
       default: return <ComingSoonPage page={active} t={t} />;
     }

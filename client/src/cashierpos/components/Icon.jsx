@@ -14,6 +14,7 @@ const ICONS = {
   tag: '<path d="M20.6 13.4l-7.2 7.2a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8z"/><circle cx="7.5" cy="7.5" r="1.5"/>',
   void: '<path d="M6 6l12 12M18 6L6 18"/>',
   hold: '<rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/>',
+  pause: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
   recall: '<path d="M4 12a8 8 0 1 1 2.34 5.66"/><path d="M2 4v5h5"/><path d="M12 8v4l3 2"/>',
   cash: '<rect x="2.5" y="6" width="19" height="12" rx="2"/><circle cx="12" cy="12" r="2.6"/><path d="M6 9h.01M18 15h.01"/>',
   coin: '<circle cx="12" cy="12" r="9"/><path d="M12 7v10M9.5 9h4a1.5 1.5 0 0 1 0 3h-3a1.5 1.5 0 0 0 0 3h4"/>',

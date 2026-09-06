@@ -70,11 +70,23 @@ if (!originallyLoadable) {
   const version = electronVersion();
   if (version) {
     console.log('\n[test] Restoring the Electron ABI build of better-sqlite3…');
-    const restoreStatus = run(
-      npx,
-      ['electron-rebuild', '-f', '-w', 'better-sqlite3', '--module-dir', '.', '--version', version],
-      rootDir
-    );
+
+    let restoreStatus = 1;
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      restoreStatus = run(
+        npx,
+        ['electron-rebuild', '-f', '-w', 'better-sqlite3', '--module-dir', '.', '--version', version],
+        rootDir
+      );
+
+      if (restoreStatus === 0) break;
+      if (attempt < 3) {
+        console.warn(`\n[test] Restore attempt ${attempt} failed; retrying…`);
+        const { setTimeout } = require('timers/promises');
+        setTimeout(1000).catch(() => {});
+      }
+    }
+
     if (restoreStatus !== 0) {
       console.warn(
         '\n[test] Could not restore the Electron ABI build.\n' +

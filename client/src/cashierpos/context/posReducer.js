@@ -44,6 +44,7 @@ export function createInitialState(initialSaleNumber = 1) {
     session: null,
     searchQuery: "",
     heldSales: [],
+    pendingSaleId: null,
     dialog: null,
     toast: null,
     /** line id currently animating the `.is-flash` highlight */
@@ -62,6 +63,12 @@ export function posReducer(state, action) {
       return {
         ...state,
         saleNumber: Math.max(1, Math.floor(Number(action.number)) || 1),
+      };
+
+    case "LOAD_HELD_SALES":
+      return {
+        ...state,
+        heldSales: Array.isArray(action.sales) ? action.sales : [],
       };
 
     case "SET_SESSION":
@@ -179,10 +186,30 @@ export function posReducer(state, action) {
         customer: null,
         customerType: "walkin",
         customerId: "",
+        pendingSaleId: null,
         saleNumber: state.saleNumber + 1,
         standby: true,
         paused: false
       };
+
+    case "CANCEL_TRANSACTION": {
+      return {
+        ...state,
+        cart: [],
+        selectedIndex: null,
+        customer: null,
+        customerType: "walkin",
+        customerId: "",
+        pendingSaleId: null,
+        nextLineId: 1,
+        searchQuery: "",
+        standby: true,
+        paused: false,
+        dialog: action.openRecall ? { type: "recall" } : null,
+        flashLineId: null,
+        pressedButton: null
+      };
+    }
 
     case "SET_CUSTOMER": {
       // action.name = customer name, action.customerType = walkin|member|senior|pwd,
@@ -229,21 +256,22 @@ export function posReducer(state, action) {
       // Park the transaction under its OWN invoice number (captured from the
       // current counter), then advance the counter so the fresh register and
       // any later held sale each get a unique SI-###### id.
-      const invoiceNo = formatInvoiceNo(state.saleNumber);
+      const invoiceNo = action?.extra?.invoiceNo || formatInvoiceNo(state.saleNumber);
       const sale = {
-        id: Date.now(),
+        id: action?.extra?.id || Date.now(),
         invoiceNo,
-        cashier: CASHIER,
-        lines: state.cart.map((l) => ({ ...l })),
-        customer: state.customer,
-        customerType: state.customerType,
-        customerId: state.customerId,
-        amountDue: summary.amountDue,
-        heldAt: new Date().toLocaleTimeString()
+        cashier: action?.extra?.cashier || CASHIER,
+        lines: action?.extra?.lines || state.cart.map((l) => ({ ...l })),
+        customer: action?.extra?.customer || state.customer,
+        customerType: action?.extra?.customerType || state.customerType,
+        customerId: action?.extra?.customerId || state.customerId,
+        amountDue: action?.extra?.amountDue ?? summary.amountDue,
+        heldAt: action?.extra?.heldAt || new Date().toLocaleTimeString()
       };
       return {
         ...state,
         heldSales: [...state.heldSales, sale],
+        pendingSaleId: null,
         saleNumber: state.saleNumber + 1,
         cart: [],
         selectedIndex: null
@@ -264,8 +292,17 @@ export function posReducer(state, action) {
         customer: sale.customer || state.customer,
         customerType: sale.customerType || state.customerType || "walkin",
         customerId: sale.customerId || "",
+        pendingSaleId: sale.id || null,
         heldSales: state.heldSales.filter((_, i) => i !== action.index),
         saleNumber: recalledNumber || state.saleNumber
+      };
+    }
+
+    case "RESTORE_HELD_SALE": {
+      if (!action.sale || state.heldSales.some((sale) => sale.id === action.sale.id)) return state;
+      return {
+        ...state,
+        heldSales: [...state.heldSales, action.sale]
       };
     }
 

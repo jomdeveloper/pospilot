@@ -119,7 +119,8 @@ export default function PaymentDialog({ dialog }) {
           transactionId: invoiceNo,
           // Attribute the sale to the open cashier session so the drawer
           // totals (cash sales / expected cash) stay in sync server-side.
-          cashierSessionId: state.session ? state.session.id : undefined
+          cashierSessionId: state.session ? state.session.id : undefined,
+          pendingSaleId: state.pendingSaleId || undefined
         },
         runtime && runtime.sessionToken ? runtime.sessionToken : undefined
       );
@@ -128,6 +129,14 @@ export default function PaymentDialog({ dialog }) {
       actions.showToast("Unable to save the sale: " + ((err && err.message) || "server unreachable"), true, "error");
       setStage("confirm");
       return;
+    }
+
+    if (state.pendingSaleId && runtime?.sessionToken) {
+      try {
+        await api.completePendingSale(state.pendingSaleId, runtime.sessionToken);
+      } catch (err) {
+        console.error("[pos] pending sale completion update failed:", (err && err.message) || err);
+      }
     }
 
     // Build the receipt from the SERVER-AUTHORITATIVE numbers so the printed

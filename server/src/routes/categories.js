@@ -5,13 +5,28 @@ const { auditLog } = require('../audit');
 
 const router = express.Router();
 
-const ALLOWED_SUBCATEGORY_FIELDS = new Set([
-  'Expiry date', 'Storage condition', 'Batch/lot number', 'Prescription required',
-  'FDA registration number', 'Price per kilo', 'Net weight', 'Size', 'Color',
-  'Material', 'Warranty period', 'Serial number', 'Duration', 'Service fee',
-  'Linked component products',
-]);
 const ALLOWED_FIELD_TYPES = new Set(['date', 'text', 'number', 'boolean']);
+
+function normalizeAttributeDefinition(attribute, includeMetadataDefaults = false) {
+  if (!attribute || typeof attribute !== 'object') return null;
+
+  const attributeName = String(attribute.name || attribute.label || '').trim();
+  if (!attributeName) return null;
+
+  const dataType = String(attribute.dataType || attribute.type || 'text').trim();
+  const normalized = {
+    name: attributeName,
+    dataType: ALLOWED_FIELD_TYPES.has(dataType) ? dataType : 'text',
+    required: Boolean(attribute.required),
+  };
+
+  if (includeMetadataDefaults) {
+    normalized.options = Array.isArray(attribute.options) ? attribute.options : [];
+    normalized.validation = attribute.validation && typeof attribute.validation === 'object' ? attribute.validation : null;
+  }
+
+  return normalized;
+}
 
 function parseProductTypeDefinitions(value) {
   if (Array.isArray(value)) {
@@ -29,19 +44,7 @@ function parseProductTypeDefinitions(value) {
 
         const attributes = Array.isArray(item.attributes)
           ? item.attributes
-              .map((attribute) => {
-                if (!attribute || typeof attribute !== 'object') return null;
-                const attributeName = String(attribute.name || attribute.label || '').trim();
-                if (!attributeName) return null;
-                if (!ALLOWED_SUBCATEGORY_FIELDS.has(attributeName)) return null;
-                return {
-                  name: attributeName,
-                  dataType: ALLOWED_FIELD_TYPES.has(String(attribute.dataType || attribute.type || 'text').trim()) ? String(attribute.dataType || attribute.type || 'text').trim() : 'text',
-                  required: Boolean(attribute.required),
-                  options: Array.isArray(attribute.options) ? attribute.options : [],
-                  validation: attribute.validation && typeof attribute.validation === 'object' ? attribute.validation : null,
-                };
-              })
+              .map((attribute) => normalizeAttributeDefinition(attribute, false))
               .filter(Boolean)
           : [];
 
@@ -61,7 +64,25 @@ function parseProductTypeDefinitions(value) {
     if ((trimmed.startsWith('[') && trimmed.endsWith(']')) || (trimmed.startsWith('{') && trimmed.endsWith('}'))) {
       try {
         const parsed = JSON.parse(trimmed);
-        return parseProductTypeDefinitions(parsed);
+        if (Array.isArray(parsed)) {
+          return parsed.map((item) => {
+            if (!item || typeof item !== 'object') return null;
+            const name = String(item.name || item.productType || item.type || '').trim();
+            if (!name) return null;
+
+            const attributes = Array.isArray(item.attributes)
+              ? item.attributes
+                  .map((attribute) => normalizeAttributeDefinition(attribute, true))
+                  .filter(Boolean)
+              : [];
+
+            return {
+              name,
+              description: String(item.description || '').trim(),
+              attributes,
+            };
+          }).filter(Boolean);
+        }
       } catch (error) {
         // Fall through to comma-delimited parsing below.
       }
@@ -101,7 +122,13 @@ router.get('/', authenticate, (req, res) => {
     counts.get(category.name).productTypeDefinitions = types.map((type) => ({
       name: type.name,
       description: type.description || '',
-      attributes: db.prepare('SELECT name, data_type AS dataType, required FROM product_attribute_definitions WHERE product_type_id = ? AND active = 1 ORDER BY display_order, name').all(type.id).map((attribute) => ({ ...attribute, required: Boolean(attribute.required) })),
+      attributes: db.prepare('SELECT name, data_type AS dataType, required, options_json AS options, validation_json AS validation FROM product_attribute_definitions WHERE product_type_id = ? AND active = 1 ORDER BY display_order, name').all(type.id).map((attribute) => ({
+        name: attribute.name,
+        dataType: attribute.dataType || 'text',
+        required: Boolean(attribute.required),
+        options: attribute.options ? JSON.parse(attribute.options) : [],
+        validation: attribute.validation ? JSON.parse(attribute.validation) : null,
+      })),
     }));
   });
 
@@ -196,7 +223,11 @@ router.patch('/:categoryName', requireCategoryManager, (req, res) => {
       db.prepare('UPDATE product_types SET category_name = ? WHERE category_name = ?').run(name, existingName);
       removedTypes.forEach((type) => db.prepare('DELETE FROM product_types WHERE id = ?').run(type.id));
       const insertType = db.prepare('INSERT OR IGNORE INTO product_types (name, category_name, description) VALUES (?, ?, ?)');
-      const insertDefinition = db.prepare('INSERT OR IGNORE INTO product_attribute_definitions (product_type_id, name, data_type, required, display_order, active) VALUES (?, ?, ?, ?, ?, 1)');
+      const insertDefinition = db.prepare(`
+        INSERT OR IGNORE INTO product_attribute_definitions
+        (product_type_id, name, data_type, required, display_order, options_json, validation_json, active)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 1)
+      `);
       normalizedProductTypes.forEach((type) => {
         const typeName = String(type.name || '').trim();
         if (!typeName) return;
@@ -204,7 +235,20 @@ router.patch('/:categoryName', requireCategoryManager, (req, res) => {
         const productType = db.prepare('SELECT id FROM product_types WHERE name = ?').get(typeName);
         (type.attributes || []).forEach((attribute, index) => {
           const attributeName = String(attribute.name || '').trim();
-          if (attributeName) insertDefinition.run(productType.id, attributeName, String(attribute.dataType || 'text').trim() || 'text', attribute.required ? 1 : 0, index);
+          if (!attributeName || !productType) return;
+
+          const optionsJson = Array.isArray(attribute.options) && attribute.options.length > 0 ? JSON.stringify(attribute.options) : null;
+          const validationJson = attribute.validation && typeof attribute.validation === 'object' ? JSON.stringify(attribute.validation) : null;
+
+          insertDefinition.run(
+            productType.id,
+            attributeName,
+            String(attribute.dataType || 'text').trim() || 'text',
+            attribute.required ? 1 : 0,
+            index,
+            optionsJson,
+            validationJson
+          );
         });
       });
     });

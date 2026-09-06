@@ -183,6 +183,51 @@ function safeResolve(name) {
   return full;
 }
 
+/**
+ * Restore the live database from a snapshot, keeping a safety copy in place for
+ * rollback and cleaning stale WAL/SHM files so the restored DB is visible.
+ */
+function restoreBackup(name) {
+  const source = safeResolve(name);
+  if (!source || !fs.existsSync(source)) {
+    throw new Error('Backup not found');
+  }
+
+  const liveDb = db.dbPath;
+  if (!fs.existsSync(liveDb)) {
+    throw new Error('Live database not found');
+  }
+
+  const safetyFile = `${liveDb}.pre-restore-${Date.now()}`;
+  fs.copyFileSync(liveDb, safetyFile);
+
+  try {
+    fs.copyFileSync(source, liveDb);
+  } catch (error) {
+    try {
+      fs.unlinkSync(safetyFile);
+    } catch (_cleanupError) {
+      // keep the original file untouched if the restore fails during copy.
+    }
+    throw new Error('Could not restore the database. Close PosPilot and try again.');
+  }
+
+  for (const suffix of ['-wal', '-shm']) {
+    try {
+      fs.unlinkSync(`${liveDb}${suffix}`);
+    } catch (_error) {
+      // No stale WAL/SHM file to clean.
+    }
+  }
+
+  return {
+    filename: path.basename(source),
+    path: source,
+    safetyFile,
+    restoredAt: new Date().toISOString(),
+  };
+}
+
 let timer = null;
 
 /**
@@ -229,6 +274,7 @@ module.exports = {
   listBackups,
   pruneBackups,
   safeResolve,
+  restoreBackup,
   scheduleBackups,
   stopBackups,
   backupsToKeep,

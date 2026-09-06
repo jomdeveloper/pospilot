@@ -11,6 +11,7 @@ import { usePos } from "../context/PosContext";
 import { customerTypeLabel } from "../data/customerTypes";
 import QuickActions from "./QuickActions.jsx";
 import TransactionSummary from "./TransactionSummary.jsx";
+import Icon from "./Icon.jsx";
 import { useButtonFlash } from "./useButtonFlash.js";
 
 export default function SidePanels() {
@@ -129,7 +130,8 @@ export default function SidePanels() {
             onClick={hold}
           >
             <span className="pos-btn__key" aria-hidden="true">F6</span>
-            ⏸ Hold
+            <span className="pos-btn__icon"><Icon name="hold" /></span>
+            Hold
           </button>
           <button
             type="button"
@@ -154,7 +156,8 @@ export default function SidePanels() {
             onClick={pause}
             title="Pause the current transaction"
           >
-            <span className="pos-btn__key" aria-hidden="true">⏸</span>
+            <span className="pos-btn__key" aria-hidden="true">F12</span>
+            <span className="pos-btn__icon"><Icon name="pause" /></span>
             Pause
           </button>
           <button
