@@ -22,14 +22,18 @@ export default function Dashboard({ t }) {
   const [sales, setSales] = useState([]);
   const [customerCount, setCustomerCount] = useState(0);
   const [supplierCount, setSupplierCount] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
   useEffect(() => {
+    setLoading(true);
+    setError("");
     Promise.all([api.getProducts(), api.getSales(), api.getCustomers(), api.getSuppliers()]).then(([nextProducts, nextSales, customers, suppliers]) => {
       setProducts(nextProducts);
       setSales(nextSales);
       setCustomerCount(customers.length);
       setSupplierCount(suppliers.length);
-    }).catch(() => {});
+    }).catch((requestError) => setError(requestError.message || "Unable to load dashboard data")).finally(() => setLoading(false));
   }, []);
 
   const lowStock = products.filter((product) => product.stock > 0 && product.stock <= (product.reorder_level ?? product.min ?? 0));
@@ -53,6 +57,8 @@ export default function Dashboard({ t }) {
 
   return (
     <div className="space-y-5">
+      {loading && <div className="rounded-xl px-4 py-3 text-sm" style={{ background: t.bg, color: t.sub }}>Loading dashboard data...</div>}
+      {error && <div className="rounded-xl px-4 py-3 text-sm" style={{ background: t.dangerSoft, color: t.danger }}>{error}</div>}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard t={t} icon={Wallet} label="Total Sales Today" value={money(totalSalesToday)} tone="primary" />
         <StatCard t={t} icon={BarChart3} label="Recorded Sales" value={money(monthlySales)} tone="success" />

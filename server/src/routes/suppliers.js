@@ -1,11 +1,11 @@
 const express = require('express');
 const db = require('../db');
-const { requireAdministrator, requireCategoryManager } = require('./auth');
+const { authenticate, requireAdministrator, requireCategoryManager } = require('./auth');
 const { auditLog } = require('../audit');
 
 const router = express.Router();
 
-router.get('/', (req, res) => {
+router.get('/', authenticate, (req, res) => {
   const query = String(req.query.q || '').trim();
   const suppliers = query
     ? db.prepare("SELECT * FROM suppliers WHERE name LIKE ? OR COALESCE(contact, '') LIKE ? OR COALESCE(phone, '') LIKE ? OR COALESCE(email, '') LIKE ? ORDER BY name ASC").all(...Array(4).fill(`%${query}%`))

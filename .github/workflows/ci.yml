@@ -1,0 +1,32 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies (with Electron ABI rebuild)
+        run: npm ci
+
+      - name: Lint
+        run: npx oxlint
+
+      - name: Build client
+        run: npm run build:client
+
+      - name: Dependency audit
+        run: npm audit --audit-level=high
+
+      - name: Run server test suite (ABI-aware)
+        run: npm test

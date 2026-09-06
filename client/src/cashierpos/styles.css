@@ -1,0 +1,1530 @@
+/* ==========================================================================
+   StockPos Pilot — POS Design System (Tailwind CSS v3)
+   --------------------------------------------------------------------------
+   Skeuomorphic "S4 Glossy Plastic Blue" cashier screen — ported to Tailwind.
+   Every component class below is written with Tailwind utilities via `@apply`
+   inside `@layer components`, so the visual output is identical to the
+   previous hand-written stylesheet. Class names on the components are
+   unchanged.
+   ========================================================================== */
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ----------------------------- Base reset ------------------------------ */
+  /* Scoped to the cashier screen via body.cashierpos-body so PosPilot's login
+     and admin (StockPilot) modes are never affected. */
+  body.cashierpos-body, body.cashierpos-body #root { height: 100%; }
+
+  body.cashierpos-body {
+    @apply antialiased;
+    font-family: "Segoe UI", Inter, -apple-system, system-ui, sans-serif;
+    color: #132436;
+    padding: 0;
+    /* Four soft blue radial glows — one at each corner of the screen — over
+       the light blue-to-slate diagonal gradient base. */
+    background:
+      radial-gradient(circle at 0% 0%, rgba(96, 165, 250, 0.28), transparent 32%),
+      radial-gradient(circle at 100% 0%, rgba(96, 165, 250, 0.28), transparent 32%),
+      radial-gradient(circle at 0% 100%, rgba(96, 165, 250, 0.28), transparent 32%),
+      radial-gradient(circle at 100% 100%, rgba(96, 165, 250, 0.28), transparent 32%),
+      linear-gradient(135deg, #eef4ff 0%, #dfeafe 40%, #e2e8f0 100%);
+  }
+
+  body.cashierpos-body button { font-family: inherit; }
+
+  /* Focus rings — the barcode input is excluded (its ring lives on its
+     wrapper, see .barcode-search__input:focus-visible below). */
+  body.cashierpos-body button:focus-visible,
+  body.cashierpos-body select:focus-visible,
+  body.cashierpos-body .focus:focus {
+    outline: 2px solid #2f7fd8;
+    outline-offset: 2px;
+  }
+
+/* --------------------------- Component layer --------------------------- */
+  /* ============================ App shell ============================== */
+  .pos-shell { @apply h-full w-full; }
+
+  .pos-frame {
+    @apply flex h-full w-full flex-col overflow-hidden text-[#132436];
+    /* Transparent so the body's login-style gradient shows through the whole
+       window; the cards (table, search) sit on top with their own surfaces. */
+    background: transparent;
+    border: 1px solid #cdddf0;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .6), 0 3px 8px rgba(0, 0, 0, .12);
+  }
+
+  .pos-main { @apply flex min-h-0 flex-1; }
+
+  /* Standby workspace — centers the New Transaction card and hides the
+     normal toolbar/table. Also used for the paused-transaction view. */
+  .pos-workspace--standby {
+    @apply items-center justify-center;
+    padding: 0;
+  }
+  .standby { @apply flex flex-col items-center gap-4 text-center; }
+  .standby__logo {
+    @apply h-56 w-56 rounded-full object-contain p-3;
+    background: linear-gradient(180deg, #ffffff, #eaf1fb);
+    border: 1px solid #9fbad9;
+    box-shadow: 0 10px 26px rgba(19, 36, 54, 0.25), inset 0 2px 5px rgba(0, 0, 0, .08);
+  }
+  .standby__desc {
+    @apply max-w-[480px] rounded-xl px-6 py-3.5 text-[15.5px] font-semibold leading-relaxed text-[#334155];
+    background: linear-gradient(180deg, #ffffff, #eaf1fb);
+    border: 1px solid #cdddf0;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .6), 0 3px 8px rgba(0, 0, 0, .08);
+  }
+  .standby__desc strong { @apply text-[#2f7fd8]; }
+  .standby__new {
+    @apply mt-3 cursor-pointer rounded-xl px-8 py-3.5 text-[15px] font-extrabold text-white;
+    background: linear-gradient(180deg, #3b82f6, #1d4ed8);
+    border: 1px solid #1e40af;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .5), inset 0 -3px 6px rgba(0, 0, 0, .18), 0 3px 6px rgba(0, 0, 0, .22);
+  }
+  .standby__new:hover { filter: brightness(1.06); }
+  .standby__new.is-pressed { animation: btnFlash 0.26s ease; }
+
+  /* ============================ Header ================================= */
+  .pos-header {
+    @apply flex flex-none items-center justify-between gap-4 px-[26px];
+    /* Fixed header height (40px content + 2Ã—18px padding) so the larger
+       logo can NEVER grow it. */
+    height: 76px;
+    padding-top: 0;
+    padding-bottom: 0;
+    position: relative;
+    border-bottom: 1px solid #9fbad9;
+    background: transparent;
+  }
+
+  .pos-header__brand { @apply relative flex items-center; }
+
+  .pos-brand__copy {
+    /* Clear the absolutely-positioned 50px logo (50px + 12px gap). */
+    @apply ml-[62px];
+  }
+
+  .pos-brand__logo {
+    @apply flex h-10 w-10 items-center justify-center rounded-[11px] text-[16px] font-extrabold text-white;
+    background: linear-gradient(180deg, #3b82f6, #1d4ed8);
+    border: 1px solid #1e40af;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .5), inset 0 -3px 6px rgba(0, 0, 0, .18), 0 3px 6px rgba(0, 0, 0, .22);
+  }
+
+  /* Header logo image (circular store logo) — enlarged. It is absolutely
+     positioned so it overflows the fixed-height header visually without
+     contributing to (and thus growing) the header row height. */
+  .pos-brand__logo--img {
+    @apply absolute left-0 top-1/2 h-[52px] w-[52px] -translate-y-1/2 overflow-hidden rounded-full object-contain p-0.5;
+    background: transparent;
+    border: 1px solid rgba(37, 99, 235, 0.35);
+    box-shadow: 0 2px 6px rgba(19, 36, 54, 0.18);
+    margin: 0;
+  }
+
+  .pos-brand__name { @apply text-[17px] font-bold leading-tight; }
+
+  .pos-brand__mode {
+    @apply text-[11px] font-bold uppercase tracking-[0.4px] text-[#4a617c];
+  }
+
+  .pos-header__right { @apply flex items-center gap-3; }
+
+  .pos-header__meta { @apply flex flex-col items-end gap-0.5 text-right; }
+
+  .pos-header__who { @apply text-[13px] font-bold text-[#334155]; }
+
+  .pos-header__avatar {
+    @apply flex h-[38px] w-[38px] items-center justify-center rounded-full text-[17px] text-[#4a617c];
+    background: linear-gradient(180deg, #ffffff, #eaf1fb);
+    border: 1px solid #cdddf0;
+    box-shadow: inset 0 2px 5px rgba(0, 0, 0, .08);
+  }
+  .pos-header__avatar svg {
+    @apply h-[20px] w-[20px];
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.8;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
+  /* Standby chip in the header (shown while no transaction is in progress). */
+  .pos-header__standby {
+    @apply rounded-full px-2.5 py-1 text-[10.5px] font-extrabold uppercase tracking-[0.5px] text-[#6b84a0];
+    background: linear-gradient(180deg, #ffffff, #eaf1fb);
+    border: 1px solid #cdddf0;
+    box-shadow: inset 0 2px 5px rgba(0, 0, 0, .08);
+  }
+
+  /* Live clock chip (header) */
+  .datetime { @apply flex items-baseline justify-end gap-2 text-[12.5px] font-semibold text-[#334155]; }
+  .datetime__sep { @apply text-[#64748b]; }
+  .datetime__clock { @apply text-[14px] font-bold tabular-nums text-[#132436]; }
+  /* ============================ Toolbar ================================ */
+  .pos-workspace {
+    @apply flex min-w-0 flex-1 flex-col gap-4 px-6 py-[22px];
+    /* The area OUTSIDE the table card / search field — transparent so the
+       frame's gradient shows through; the table card stands out on it. */
+    background: transparent;
+  }
+
+  .pos-toolbar { @apply flex gap-2.5; }
+  .pos-toolbar__search { @apply min-w-0 flex-1; }
+
+  .pos-toolbar__add {
+    @apply cursor-pointer whitespace-nowrap rounded-xl px-5 py-3 text-[13px] font-bold text-white;
+    background: linear-gradient(180deg, #3b82f6, #1d4ed8);
+    border: 1px solid #1e40af;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .5), inset 0 -3px 6px rgba(0, 0, 0, .18), 0 3px 6px rgba(0, 0, 0, .22);
+  }
+  .pos-toolbar__add:hover { filter: brightness(1.06); }
+
+  /* Barcode / product search */
+  .barcode-search { @apply relative; }
+
+  .barcode-search__field {
+    /* relative so the QR icon can be absolutely positioned inside it. */
+    @apply relative flex items-center rounded-xl px-4 py-3;
+    background: linear-gradient(180deg, #ffffff, #eaf1fb);
+    border: 1px solid #9fbad9;
+    box-shadow: inset 0 2px 5px rgba(0, 0, 0, .08);
+  }
+  .barcode-search__field:focus-within {
+    border-color: #2f7fd8;
+    outline: 2px solid #2f7fd8;
+    outline-offset: 2px;
+  }
+
+  /* Barcode icon image — absolutely positioned so it never changes the field's
+     height; the input clears it with left padding. */
+  .barcode-search__icon {
+    /* Absolutely positioned â†’ it never contributes to the field's height,
+       no matter how large it gets. The input clears it with left padding. */
+    @apply pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 select-none;
+    height: 30px;
+    width: 30px;
+    object-fit: contain;
+    opacity: 0.95;
+  }
+
+  .barcode-search__input {
+    @apply m-0 block h-full w-full min-w-0 flex-1 bg-transparent p-0 text-[13px] text-[#132436];
+    padding-left: 44px;
+    border: none;
+    outline: none;
+  }
+  .barcode-search__input:focus-visible { outline: none; }
+  .barcode-search__input::placeholder { color: #6b84a0; }
+  /* ============================ Cart table ============================= */
+  .pos-cart {
+    @apply flex min-h-0 flex-1 overflow-hidden rounded-[16px];
+    /* Softly tinted (less pure white) so the table sheet isn't glaring. */
+    background: linear-gradient(180deg, #f5f8fc, #e9eff8);
+    border: 1px solid #cdddf0;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .6), 0 3px 8px rgba(0, 0, 0, .12);
+  }
+
+  .transaction-table { @apply flex min-h-0 flex-1 flex-col; }
+
+  /* Fixed header strip — sits above the scroll area so the scrollbar never
+     runs across the header. */
+  .transaction-table__head {
+    @apply flex-none;
+    background: #edf2f9;
+    border-bottom: 1px solid #cdddf0;
+  }
+  .transaction-table__head table { @apply w-full border-collapse; }
+
+  .transaction-table__scroll { @apply relative min-h-0 flex-1 overflow-y-auto; }
+
+  .transaction-table table {
+    @apply w-full table-fixed;
+    /* Separate borders (zero spacing) instead of collapsed ones — avoids the
+       subpixel 1px step that made the row divider look shifted between the
+       Item column and the numeric columns. */
+    border-collapse: separate;
+    border-spacing: 0;
+  }
+
+  .transaction-table thead th {
+    @apply whitespace-nowrap bg-[#edf2f9] px-[14px] py-[11px] text-left text-[10.5px] font-bold uppercase tracking-[0.5px] text-[#6b84a0];
+  }
+
+  /* Shared column widths — used by BOTH the header table and the body table.
+     With table-layout: fixed every column boundary is identical in the two
+     tables, so the header and rows stay aligned. */
+  thead th.col-item,     tbody td.tx-row__item      { width: auto; }
+  thead th.col-qty,      tbody td.tx-row__qty-cell  { width: 90px; }
+  thead th.col-price,    tbody td.tx-row__price     { width: 110px; }
+  thead th.col-disc-pct, tbody td.tx-row__disc-pct  { width: 95px; }
+  thead th.col-disc-amt, tbody td.tx-row__disc-amt  { width: 120px; }
+  thead th.col-total,    tbody td.tx-row__total     { width: 130px; }
+
+  /* Each header mirrors the alignment of the data beneath it. */
+  thead th.col-item     { text-align: left; }
+  thead th.col-qty      { text-align: center; }
+  thead th.col-price    { text-align: right; }
+  thead th.col-disc-pct { text-align: center; }
+  thead th.col-disc-amt { text-align: right; }
+  thead th.col-total    { text-align: right; }
+
+  .tx-row { @apply cursor-pointer; }
+  .tx-row td {
+    @apply whitespace-nowrap px-[14px] py-[11px] align-middle text-[13px];
+    border-bottom: 1px solid #cdddf0;
+  }
+  .tx-row:last-child td { border-bottom: none; }
+  .tx-row:hover td { background: rgba(19, 36, 54, 0.035); }
+
+  /* Selected row: a clearly-visible blue highlight (deeper than the light
+     page background) across the whole row, plus a solid left accent bar only
+     under the Item column data. background-clip keeps the tint inside the
+     cell padding so the divider lines stay crisp and aligned. */
+  .tx-row.is-selected td {
+    background: rgba(59, 130, 246, 0.28);
+    background-clip: padding-box;
+  }
+  .tx-row.is-selected td.tx-row__item {
+    box-shadow: inset 3px 0 0 #1d4ed8;
+  }
+
+  .tx-row__item { @apply min-w-0; }
+  .tx-row__name { @apply block truncate font-bold; }
+  .tx-row__sku { @apply mt-0.5 block truncate text-[11px] text-[#6b84a0]; }
+
+  .tx-row__qty-cell { @apply text-center; }
+  .qty-val {
+    @apply inline-block min-w-[26px] rounded-lg px-[9px] py-[3px] text-xs font-bold tabular-nums text-[#132436];
+    background: linear-gradient(180deg, #ffffff, #eaf1fb);
+    border: 1px solid #cdddf0;
+    box-shadow: inset 0 2px 5px rgba(0, 0, 0, .08);
+  }
+
+  .tx-row__price,
+  .tx-row__total { @apply text-right tabular-nums; }
+  .tx-row__total { @apply font-bold; }
+  .tx-row__disc-pct { @apply text-center text-[#132436]; }
+  .tx-row__disc-amt { @apply text-right text-[12.5px] font-semibold tabular-nums text-[#b5504a]; }
+
+  .disc-badge { @apply inline-block text-xs font-bold text-[#132436]; }
+  .disc-badge--none { @apply text-[#6b84a0]; }
+
+  /* Empty-cart state — fills the scroll area and centers the message. */
+  .transaction-table__empty {
+    @apply absolute inset-0 flex flex-col items-center justify-center gap-1 p-6 text-center;
+  }
+  .transaction-table__empty-title { @apply text-[21px] font-bold; }
+  .transaction-table__empty-hint { @apply text-[15px] text-[#6b84a0]; }
+
+/* Scrollbar + animations can't be utilities — kept as plain CSS. */
+.transaction-table__scroll::-webkit-scrollbar { width: 10px; }
+.transaction-table__scroll::-webkit-scrollbar-track { background: #edf2f9; }
+.transaction-table__scroll::-webkit-scrollbar-thumb {
+  background: #c2d4ea;
+  border-radius: 6px;
+  border: 2px solid #edf2f9;
+}
+  /* ============================ Sidebar ================================ */
+  .pos-sidebar {
+    /* overflow-hidden (NOT auto): the panel must never show a scrollbar. When
+       the window is short, the Quick Actions grid + Transaction Summary below
+       flex-shrink so the whole column always fits. */
+    @apply flex min-h-0 w-[400px] flex-col gap-3 overflow-hidden px-4 py-[16px];
+    border-left: 1px solid #9fbad9;
+    background: transparent;
+  }
+  /* In Ready Mode the right panel is fully disabled — hidden entirely so the
+     New Transaction button is the only action surface. */
+  .pos-sidebar--standby { @apply hidden; }
+
+  .sidebar-block { @apply flex min-h-0 flex-none flex-col; }
+
+  /* Quick Actions is the first block to give up space when the window is
+     short: it can shrink (flex-shrink:1 overrides the flex-none base) and its
+     tiles compress via the grid rows below, so the panel never overflows. */
+  .sidebar-block--quick {
+    @apply min-h-0;
+    flex-shrink: 1;
+    flex-grow: 0;
+  }
+  .sidebar-block--quick .quick-actions { @apply min-h-0 flex-1; }
+
+  /* Summary keeps flex-1 so it expands to fill leftover vertical space (and
+     is the second block that can shrink when there isn't enough). */
+  .sidebar-block--summary { @apply min-h-0 flex-1; }
+
+  .sidebar-block__title {
+    @apply mb-2 text-[10.5px] font-extrabold uppercase tracking-[0.6px] text-[#6b84a0];
+  }
+
+  /* Customer card */
+  .customer-card {
+    @apply flex items-center gap-3 rounded-[14px] p-[14px];
+    background: linear-gradient(180deg, #ffffff, #eaf1fb);
+    border: 1px solid #cdddf0;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .6), 0 3px 8px rgba(0, 0, 0, .12);
+  }
+  .customer-card__avatar {
+    @apply flex h-10 w-10 flex-none items-center justify-center rounded-full text-[14px] font-bold text-white;
+    background: linear-gradient(180deg, #3b82f6, #1d4ed8);
+    border: 1px solid #1e40af;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .5), inset 0 -3px 6px rgba(0, 0, 0, .18), 0 3px 6px rgba(0, 0, 0, .22);
+  }
+  .customer-card__info { @apply min-w-0; }
+  .customer-card__name { @apply text-[13.5px] font-bold; }
+  .customer-card__meta { @apply text-[11px] leading-snug text-[#6b84a0]; }
+
+  /* Customer-type badge shown next to the name in the sidebar card. */
+  .customer-card__name { @apply flex items-center gap-1.5; }
+  .cust-type-badge {
+    @apply rounded-full px-2 py-0.5 text-[9.5px] font-extrabold uppercase tracking-[0.4px] text-white;
+    border: 1px solid #1e40af;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .4);
+  }
+
+  /* Customer-type picker (Customer dialog) — inline single row, 4 equal-width
+     segments (Walk-in / Member / Senior / PWD). */
+  .cust-type { @apply flex gap-2.5; }
+  .cust-type__btn {
+    @apply flex min-w-0 flex-1 cursor-pointer flex-col items-center gap-0.5 rounded-lg px-2 py-3 text-center text-[#132436];
+    background: linear-gradient(180deg, #ffffff, #eaf1fb);
+    border: 1px solid #cdddf0;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .6), 0 2px 5px rgba(0, 0, 0, .08);
+    transition: transform 0.1s ease;
+  }
+  .cust-type__btn:hover { border-color: #2f7fd8; }
+  .cust-type__btn.is-active {
+    background: rgba(47, 127, 216, 0.12);
+    border-color: #2f7fd8;
+    box-shadow: inset 0 0 0 2px #2f7fd8, 0 2px 5px rgba(0, 0, 0, 0.08);
+  }
+  .cust-type__icon {
+    @apply mb-1 flex h-[28px] w-[28px] items-center justify-center rounded-full text-[#2f7fd8];
+    background: linear-gradient(180deg, #ffffff, #eaf1fb);
+    border: 1px solid #cdddf0;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .6);
+  }
+  .cust-type__icon svg {
+    @apply h-4 w-4;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  .cust-type__btn.is-active .cust-type__icon {
+    color: #ffffff;
+    background: linear-gradient(180deg, #3b82f6, #1d4ed8);
+    border-color: #1e40af;
+  }
+  .cust-type__name { @apply text-[13px] font-extrabold; }
+  .cust-type__hint { @apply text-[10.5px] text-[#6b84a0]; }
+  .form-row input:disabled { @apply cursor-not-allowed opacity-50; }
+
+  /* Member lookup result card (Customer dialog) */
+  .member-card {
+    @apply mt-3 flex cursor-pointer items-center justify-between gap-3 rounded-xl px-3.5 py-2.5;
+    background: rgba(110, 199, 143, 0.12);
+    border: 1px solid #3e8f5f;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .6);
+    transition: box-shadow 0.12s ease;
+  }
+  .member-card.is-confirmed {
+    border-color: #2c6b45;
+    box-shadow: inset 0 0 0 2px #2c6b45, inset 0 1px 0 rgba(255, 255, 255, .6);
+  }
+  .member-card__main { @apply flex min-w-0 flex-col; }
+  .member-card__id { @apply font-mono text-[11px] font-bold text-[#3e8f5f]; }
+  .member-card__name { @apply text-[13px] font-extrabold text-[#132436]; }
+  .member-card__meta { @apply text-[11px] text-[#6b84a0]; }
+  .member-card__found {
+    @apply flex-none rounded-full px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-[0.4px] text-white;
+    background: linear-gradient(180deg, #6ec78f, #3e8f5f);
+    border: 1px solid #2c6b45;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .4);
+  }
+  .member-card__check {
+    @apply flex flex-none cursor-pointer items-center gap-1.5 text-[11.5px] font-bold text-[#132436];
+  }
+  .member-card__check input {
+    @apply h-4 w-4 cursor-pointer rounded accent-[#3e8f5f];
+  }
+
+  /* Member search — magnifier icon sits INSIDE the input. */
+  .search-with-icon { @apply relative flex flex-1 items-center; }
+  .form-row .search-with-icon input { @apply flex-1; padding-left: 34px; }
+  .search-with-icon__icon {
+    @apply pointer-events-none absolute left-3 top-1/2 flex -translate-y-1/2 items-center text-[#6b84a0];
+  }
+  .search-with-icon__icon svg {
+    @apply h-4 w-4;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
+  /* Quick actions grid */
+  .quick-actions {
+    @apply grid min-h-0 flex-1 grid-cols-2 gap-[9px];
+    /* Three rows of two tiles; rows compress (min 48px) when vertical space is
+       tight so the panel never overflows. */
+    grid-auto-rows: minmax(48px, 1fr);
+  }
+  /* Tiles deliberately match the Paybar's secondary buttons (Pause / Hold /
+     Cancel): same 12.5px font, padding, light-gray gradient, border + inset
+     shadow and hover treatment. */
+  .quick-action {
+    @apply relative flex min-w-0 cursor-pointer items-center justify-center gap-1.5 rounded-xl p-[14px] text-center text-[12.5px] font-extrabold text-[#132436];
+    min-height: 0;
+    background: linear-gradient(180deg, #ffffff, #dde3ea);
+    border: 1px solid #b7c3d1;
+    box-shadow: inset 0 2px 5px rgba(0, 0, 0, .08);
+  }
+  .quick-action:hover { border-color: #2f7fd8; filter: brightness(0.98); }
+  .quick-action.is-pressed { animation: btnFlash 0.26s ease; }
+
+  /* Key cap — identical to the paybar button key cap. */
+  .quick-action__key {
+    @apply absolute right-[9px] top-[7px] inline-block rounded px-[5px] py-px text-[9px] font-extrabold leading-[1.35] text-[#6b84a0];
+    background: linear-gradient(180deg, #ffffff, #eaf1fb);
+    border: 1px solid #cdddf0;
+    box-shadow: inset 0 2px 5px rgba(0, 0, 0, .08);
+  }
+
+  .quick-action__icon {
+    /* Inline icon, same visual weight as the glyphs on the paybar buttons. */
+    @apply flex h-4 w-4 flex-none items-center justify-center text-[#132436];
+  }
+  .quick-action__icon svg {
+    @apply h-4 w-4;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.8;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  .quick-action__name { @apply block min-w-0 truncate; }
+  /* Transaction summary — card fills its block and pins the total to the
+     bottom so the panel's height is always fully used. */
+  .side-summary {
+    @apply flex min-h-0 flex-1 flex-col overflow-hidden rounded-[14px] p-3;
+    background: linear-gradient(180deg, #ffffff, #eaf1fb);
+    /* Dashed border around the whole Transaction Summary content — thick
+       enough and dark enough to be clearly visible. */
+    border: 1.5px dashed #93aacb;
+    box-shadow: inset 0 2px 5px rgba(0, 0, 0, .08);
+  }
+  .side-summary__row { @apply flex justify-between py-[5px] text-[13.5px] font-bold text-[#132436]; }
+  .side-summary__label { @apply text-[#334155]; }
+  .side-summary__value { @apply font-bold tabular-nums text-[#132436]; }
+  .side-summary__value--discount { @apply text-[#b5504a]; }
+  .side-summary__divider {
+    @apply my-2 mt-auto;
+    border-top: 1px dashed #cdddf0;
+  }
+  .side-summary__total {
+    @apply flex justify-between pt-2 text-[20px] font-extrabold text-[#132436];
+  }
+  .side-summary__total span:last-child { @apply tabular-nums; }
+
+  /* Cancel / Pay / Pause / Hold / Recall */
+  .pos-paybar { @apply mt-auto flex flex-col gap-2.5; }
+  .pos-paybar__row { @apply flex gap-2.5; }
+  .pos-paybar__row .pos-btn { @apply basis-0 flex-1; }
+  .pos-btn {
+    @apply relative cursor-pointer rounded-xl border p-[14px] text-[12.5px] font-bold;
+    border-color: #cdddf0;
+    background: linear-gradient(180deg, #ffffff, #eaf1fb);
+    box-shadow: inset 0 2px 5px rgba(0, 0, 0, .08);
+  }
+  .pos-btn--cancel,
+  .pos-btn--hold,
+  .pos-btn--pause,
+  .pos-btn--recall {
+    @apply font-extrabold text-[#132436];
+    border: 1px solid #b7c3d1;
+    background: linear-gradient(180deg, #ffffff, #dde3ea);
+    box-shadow: inset 0 2px 5px rgba(0, 0, 0, .08);
+  }
+  .pos-btn--cancel:hover,
+  .pos-btn--hold:hover,
+  .pos-btn--pause:hover,
+  .pos-btn--recall:hover {
+    border-color: #2f7fd8;
+    filter: brightness(0.98);
+  }
+  .pos-btn--pay {
+    @apply w-full text-[14.5px] font-extrabold text-white;
+    border: 1px solid #1e40af;
+    background: linear-gradient(180deg, #3b82f6, #1d4ed8);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .5), inset 0 -3px 6px rgba(0, 0, 0, .18), 0 3px 6px rgba(0, 0, 0, .22);
+  }
+  .pos-btn--pay:hover { filter: brightness(1.06); }
+  .pos-btn.is-pressed { animation: btnFlash 0.26s ease; }
+
+  .pos-btn__key {
+    @apply absolute right-[9px] top-[7px] inline-block rounded px-[5px] py-px text-[9px] font-extrabold leading-[1.35] text-[#6b84a0];
+    background: linear-gradient(180deg, #ffffff, #eaf1fb);
+    border: 1px solid #cdddf0;
+    box-shadow: inset 0 2px 5px rgba(0, 0, 0, .08);
+  }
+  .pos-btn--pay .pos-btn__key {
+    @apply text-white;
+    background: rgba(255, 255, 255, 0.16);
+    border-color: rgba(255, 255, 255, 0.35);
+    box-shadow: none;
+  }
+
+  /* Recall — shares the equal-width row with Hold (always visible; the count
+     pill only shows while held sales exist). */
+  .pos-btn__badge {
+    @apply ml-2 inline-flex min-w-[22px] items-center justify-center rounded-full px-[7px] py-px align-middle text-[11px] font-extrabold tabular-nums text-white;
+    background: linear-gradient(180deg, #3b82f6, #1d4ed8);
+    border: 1px solid #1e40af;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .5), 0 2px 4px rgba(0, 0, 0, .18);
+  }
+
+  /* ============================ Footer ================================= */
+  .pos-footer {
+    @apply flex flex-none justify-between px-[26px] py-3 text-[12px] font-semibold text-[#334155];
+    border-top: 1px solid #9fbad9;
+    background: transparent;
+  }
+
+  /* ============================ Toast =================================== */
+  .toast {
+    @apply pointer-events-none fixed left-1/2 top-6 z-[70] flex max-w-[90vw] items-center gap-3 rounded-2xl py-2.5 pl-2.5 pr-5 text-left text-[13.5px] font-semibold text-[#132436];
+    background: rgba(255, 255, 255, 0.96);
+    border: 1px solid #dbe3ee;
+    box-shadow: 0 14px 40px rgba(15, 23, 42, 0.16), 0 2px 8px rgba(15, 23, 42, 0.06);
+    backdrop-filter: blur(6px);
+    transform: translate(-50%, -140%);
+    opacity: 0;
+    transition: transform 0.3s cubic-bezier(.22, 1, .36, 1), opacity 0.25s ease;
+  }
+  .toast.is-visible { transform: translate(-50%, 0); opacity: 1; }
+
+  /* Icon chip — colored by the toast's tone. */
+  .toast__icon {
+    @apply flex h-9 w-9 flex-none items-center justify-center rounded-xl;
+    color: #ffffff;
+  }
+  .toast__icon svg {
+    @apply h-[18px] w-[18px];
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
+  .toast--success .toast__icon {
+    background: linear-gradient(180deg, #6ec78f, #3e8f5f);
+    box-shadow: 0 4px 12px rgba(62, 143, 95, 0.35);
+  }
+  .toast--danger .toast__icon {
+    background: linear-gradient(180deg, #d96a63, #b5504a);
+    box-shadow: 0 4px 12px rgba(181, 80, 74, 0.35);
+  }
+  .toast--accent .toast__icon {
+    background: linear-gradient(180deg, #3b82f6, #1d4ed8);
+    box-shadow: 0 4px 12px rgba(37, 99, 235, 0.35);
+  }
+
+@keyframes btnFlash {
+  0% { filter: brightness(0.88); }
+  100% { filter: none; }
+}
+  /* =========================== Dialog / modal ========================== */
+  .dialog-backdrop {
+    @apply fixed inset-0 grid place-items-center p-4;
+    background: rgba(19, 36, 54, 0.35);
+    animation: bdFadeIn 0.18s ease;
+    z-index: 50;
+  }
+  .dialog-backdrop.is-leaving { animation: bdFadeOut 0.18s ease forwards; }
+  .dialog-backdrop.is-leaving .dialog { animation: dlgOut 0.18s ease forwards; }
+
+  .dialog {
+    @apply flex max-h-[92vh] w-full flex-col overflow-hidden text-[#132436];
+    width: min(460px, 92vw);
+    background: linear-gradient(180deg, #ffffff, #eaf1fb);
+    border: 1px solid #cdddf0;
+    box-shadow: 0 18px 48px rgba(19, 36, 54, 0.25), inset 0 1px 0 rgba(255, 255, 255, .6), 0 3px 8px rgba(0, 0, 0, .12);
+    border-radius: 16px;
+    animation: dlgIn 0.22s ease;
+  }
+  .dialog--wide { width: min(680px, 94vw); }
+  /* Customer dialog — a bit wider so the 4 type segments breathe. */
+  .dialog--customer { width: min(520px, 94vw); }
+  /* Product Search — fixed size with ~10% breathing room on every side. */
+  .dialog--productsearch {
+    width: min(760px, 80vw);
+    height: min(640px, 80vh);
+  }
+  .dialog--productsearch .dialog__body {
+    @apply min-h-0 flex-1 gap-3 overflow-hidden p-4;
+  }
+  .dialog--receipt { width: min(360px, 92vw); }
+
+  .dialog__header {
+    @apply flex items-center justify-between gap-3 px-4 py-4;
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.65), rgba(234, 241, 251, 0.4));
+    border-bottom: 1px solid #cdddf0;
+  }
+  .dialog__title { @apply text-[1.05rem] font-bold; }
+
+  .dialog__close {
+    @apply h-8 w-8 cursor-pointer rounded-lg text-[1.2rem] font-bold leading-none text-[#6b84a0];
+    background: transparent;
+    border: none;
+  }
+  .dialog__close:hover { background: rgba(19, 36, 54, 0.06); color: #132436; }
+
+  .dialog__body { @apply flex flex-col gap-4 overflow-y-auto p-4; }
+
+  .dialog__footer {
+    @apply flex justify-end gap-2.5 px-4 py-[14px];
+    border-top: 1px solid #cdddf0;
+    background: rgba(0, 0, 0, 0.015);
+  }
+
+  .dialog--settings { max-height: min(88vh, 660px); }
+  .dialog--settings .dialog__body { @apply min-h-0 flex-1 overflow-y-auto; }
+
+  .dialog__hint { @apply text-[14px] leading-relaxed text-[#4a617c]; }
+  .dialog__hint strong { @apply text-[#132436]; }
+
+  .dialog-btn {
+    @apply cursor-pointer rounded-lg px-[18px] py-2.5 text-[14px] font-bold text-[#132436];
+    background: linear-gradient(180deg, #ffffff, #eaf1fb);
+    border: 1px solid #cdddf0;
+    box-shadow: inset 0 2px 5px rgba(0, 0, 0, .08);
+  }
+  .dialog-btn:hover { border-color: #b7cdea; }
+  .dialog-btn--primary {
+    @apply text-white;
+    background: linear-gradient(180deg, #3b82f6, #1d4ed8);
+    border-color: #1e40af;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .5), inset 0 -3px 6px rgba(0, 0, 0, .18), 0 3px 6px rgba(0, 0, 0, .22);
+  }
+  .dialog-btn--primary:hover { filter: brightness(1.06); }
+  .dialog-btn--danger {
+    @apply text-white;
+    background: linear-gradient(180deg, #d96a63, #b5504a);
+    border-color: #8f3b36;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4), inset 0 -3px 6px rgba(0, 0, 0, 0.18), 0 3px 6px rgba(0, 0, 0, 0.2);
+  }
+  .dialog-btn--add {
+    @apply text-white;
+    background: linear-gradient(180deg, #6ec78f, #3e8f5f);
+    border-color: #2c6b45;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4), inset 0 -3px 6px rgba(0, 0, 0, 0.16), 0 3px 6px rgba(0, 0, 0, 0.18);
+  }
+  .dialog-btn--add:hover { filter: brightness(1.06); }
+  .dialog-btn:disabled { @apply cursor-not-allowed opacity-50; }
+
+  .form-row { @apply flex flex-col gap-1.5; }
+  .form-row label {
+    @apply text-[13px] font-bold uppercase tracking-[0.4px] text-[#4a617c];
+  }
+  .form-row input,
+  .form-row select {
+    @apply rounded-lg px-3 py-2.5 text-[15px] text-[#132436];
+    background: linear-gradient(180deg, #ffffff, #eaf1fb);
+    border: 1px solid #cdddf0;
+    box-shadow: inset 0 2px 5px rgba(0, 0, 0, .08);
+  }
+  .form-row input:focus,
+  .form-row select:focus {
+    outline: none;
+    border-color: #2f7fd8;
+  }
+
+  /* Held list (Recall + More) */
+  .held-list { @apply flex max-h-80 list-none flex-col gap-2 overflow-y-auto; }
+  .held-list__item {
+    @apply flex cursor-pointer items-center justify-between gap-3 rounded-xl px-[14px] py-3 text-[13px] text-[#132436];
+    background: linear-gradient(180deg, #ffffff, #eaf1fb);
+    border: 1px solid #cdddf0;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .6), 0 3px 8px rgba(0, 0, 0, .12);
+  }
+  .held-list__item.is-active {
+    background: rgba(47, 127, 216, 0.12);
+    border-color: #2f7fd8;
+    box-shadow: inset 3px 0 0 #2f7fd8, 0 3px 8px rgba(0, 0, 0, 0.12);
+  }
+  .held-list__item.is-danger { border-color: rgba(181, 80, 74, 0.6); }
+  .held-list__meta { @apply mt-[3px] text-[11.5px] text-[#6b84a0]; }
+  .held-list__type { @apply not-italic font-semibold text-[#2f7fd8]; }
+  .held-list__amount { @apply text-[14px] font-extrabold tabular-nums whitespace-nowrap; }
+
+/* Scrollbar + keyframe animations (not utilities). */
+@keyframes bdFadeIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes bdFadeOut { from { opacity: 1; } to { opacity: 0; } }
+@keyframes dlgIn {
+  from { opacity: 0; transform: translateY(-20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes dlgOut {
+  from { opacity: 1; transform: translateY(0); }
+  to { opacity: 0; transform: translateY(20px); }
+}
+  /* ========================= Payment dialog ============================ */
+  .payment__header {
+    @apply flex w-full items-center justify-between gap-4;
+  }
+  .payment__header-text { @apply flex flex-col; }
+  .payment__header-label { @apply text-[1.05rem] font-bold; }
+  .payment__header-subtitle { @apply text-xs text-[#6b84a0]; }
+  .payment__header-due { @apply text-right; }
+  .payment__due-label {
+    @apply block text-[11px] uppercase tracking-[0.5px] text-[#6b84a0];
+  }
+  .payment__due-amount {
+    @apply block text-[1.6rem] font-extrabold tabular-nums text-[#2f7fd8];
+  }
+
+  .payment__methods { @apply grid grid-cols-4 gap-2.5; }
+  .payment__method {
+    @apply flex cursor-pointer flex-col items-center gap-1.5 rounded-xl px-2 py-[14px] text-[#132436];
+    background: linear-gradient(180deg, #ffffff, #eaf1fb);
+    border: 1px solid #cdddf0;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .6), 0 3px 8px rgba(0, 0, 0, .12);
+  }
+  .payment__method.is-active {
+    background: rgba(47, 127, 216, 0.12);
+    border-color: #2f7fd8;
+    box-shadow: inset 0 0 0 1px #2f7fd8, 0 3px 8px rgba(0, 0, 0, 0.12);
+  }
+  .payment__method.is-arrow {
+    outline: 2px solid #2f7fd8;
+    outline-offset: -2px;
+  }
+  .payment__method-icon { @apply flex items-center justify-center text-xl; }
+  .payment__method-icon svg {
+    @apply h-[22px] w-[22px];
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.8;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  .payment__method-monogram {
+    @apply flex h-[22px] w-[22px] items-center justify-center rounded-md text-[13px] font-extrabold;
+    background: linear-gradient(180deg, #ffffff, #eaf1fb);
+    border: 1px solid #cdddf0;
+  }
+  .payment__method-label { @apply text-[13px] font-bold; }
+  .payment__method-sub { @apply text-[10px] text-[#6b84a0]; }
+
+  .payment__cash { @apply flex flex-col gap-3; }
+  .payment__label { @apply text-xs font-bold text-[#6b84a0]; }
+  .payment__cash-input {
+    @apply rounded-xl px-4 py-3 text-right text-[1.5rem] font-extrabold tabular-nums text-[#132436];
+    background: linear-gradient(180deg, #ffffff, #eaf1fb);
+    border: 1px solid #cdddf0;
+    box-shadow: inset 0 2px 5px rgba(0, 0, 0, .08);
+  }
+  .payment__cash-input:focus { outline: none; border-color: #2f7fd8; }
+
+  .payment__quick { @apply grid grid-cols-6 gap-2; }
+  .payment__quick-btn {
+    @apply cursor-pointer rounded-lg px-1 py-2 text-[12.5px] font-bold text-[#132436];
+    background: linear-gradient(180deg, #ffffff, #eaf1fb);
+    border: 1px solid #cdddf0;
+    box-shadow: inset 0 2px 5px rgba(0, 0, 0, .08);
+  }
+  .payment__quick-btn:hover { border-color: #2f7fd8; }
+  .payment__quick-btn.is-active,
+  .payment__quick-btn--exact {
+    background: rgba(47, 127, 216, 0.12);
+    border-color: #2f7fd8;
+  }
+  .payment__quick-btn.is-arrow {
+    outline: 2px solid #2f7fd8;
+    outline-offset: -2px;
+  }
+
+  .payment__change {
+    @apply flex items-baseline justify-between gap-3 rounded-xl p-4;
+    background: rgba(47, 127, 216, 0.12);
+    border: 1px solid rgba(47, 127, 216, 0.45);
+  }
+  .payment__change-label {
+    @apply text-[0.85rem] font-bold uppercase tracking-[0.08em] text-[#6b84a0];
+  }
+  .payment__change-amount {
+    @apply text-[clamp(2rem,5vw,3rem)] font-extrabold leading-none tabular-nums text-[#2f7fd8];
+  }
+  .payment__change-amount--short { @apply text-[#b5504a]; }
+
+  .payment__noncash {
+    @apply flex flex-col gap-3 rounded-xl p-4;
+    background: linear-gradient(180deg, #ffffff, #eaf1fb);
+    border: 1px solid #cdddf0;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .6), 0 3px 8px rgba(0, 0, 0, .12);
+  }
+  .payment__noncash-amount { @apply flex items-baseline justify-between; }
+  .payment__noncash-label { @apply text-[0.85rem] text-[#6b84a0]; }
+  .payment__noncash-value {
+    @apply text-[clamp(1.6rem,4vw,2.4rem)] font-extrabold tabular-nums text-[#132436];
+  }
+
+  .pconf { @apply flex flex-col gap-2.5 py-2; }
+  .pconf__method { @apply text-[13px] font-extrabold uppercase tracking-[0.08em] text-[#2f7fd8]; }
+  .pconf__row {
+    @apply flex justify-between border-b border-dashed border-[#cdddf0] py-1 text-[14px];
+  }
+  .pconf__row span { @apply text-[#6b84a0]; }
+  .pconf__amount { @apply text-[#132436]; }
+  .pconf__change { @apply text-[#3e8f5f]; }
+  .pconf__hint { @apply mt-1.5; }
+
+  .proc { @apply flex flex-col items-center gap-2.5 py-[18px]; }
+  .proc__spinner {
+    @apply h-[42px] w-[42px] rounded-full;
+    border: 4px solid #cdddf0;
+    border-top-color: #2f7fd8;
+    animation: spin 0.8s linear infinite;
+  }
+  .proc__title { @apply text-[15px] font-extrabold; }
+  .proc__sub { @apply text-xs text-[#6b84a0]; }
+
+  .ok { @apply flex flex-col items-center gap-2 py-4 text-center; }
+  .ok__check {
+    @apply grid h-16 w-16 place-items-center rounded-full text-white;
+    background: linear-gradient(180deg, #6ec78f, #3e8f5f);
+    border: 1px solid #2c6b45;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4), inset 0 -3px 6px rgba(0, 0, 0, 0.16), 0 3px 6px rgba(0, 0, 0, 0.18);
+  }
+  .ok__check svg {
+    @apply h-[34px] w-[34px];
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2.4;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  .ok__title { @apply text-[1.2rem] font-extrabold; }
+  .ok__sub { @apply text-[13px] text-[#6b84a0]; }
+
+@keyframes spin { to { transform: rotate(360deg); } }
+  /* ========================= Receipt dialog ============================= */
+  .receipt {
+    @apply w-full p-[18px] text-left;
+    background: #fdfdf8;
+    color: #1a1c20;
+    font-family: "Cascadia Code", Consolas, "Roboto Mono", monospace;
+    font-size: 11px;
+  }
+  .receipt__store {
+    @apply flex flex-col items-center gap-0.5 text-center;
+  }
+  .receipt__store strong { @apply text-xs tracking-[0.04em]; }
+  .receipt__invoice-title { @apply mt-1.5 text-center font-extrabold tracking-[0.16em]; }
+  .receipt__divider { border-top: 1px dashed #9aa0a6; margin: 10px 0; }
+  .receipt__meta { @apply flex flex-col gap-0.5; }
+  .receipt__colhead { @apply flex justify-between font-extrabold tracking-[0.08em]; }
+  .receipt__line { margin: 6px 0; }
+  .receipt__line-name { @apply block font-bold; }
+  .receipt__line-sub { @apply flex justify-between gap-2; }
+  .receipt__row { @apply flex justify-between gap-2 py-0.5; }
+  .receipt__row--total { @apply text-xs font-extrabold; }
+  .receipt__row--change { @apply font-extrabold; }
+  .receipt__sc-title { @apply font-extrabold; }
+  .receipt__senior { @apply flex flex-col gap-0.5 font-bold; }
+  .receipt__senior-val { @apply font-normal; }
+  .receipt__foot { @apply text-center font-extrabold tracking-[0.2em]; }
+
+  /* ========================= About / Help =============================== */
+  .about { @apply flex flex-col gap-4; }
+  .about__brand {
+    @apply flex items-center gap-3 border-b border-[#cdddf0] pb-4;
+  }
+  .about__logo {
+    @apply grid h-12 w-12 place-items-center rounded-xl text-white;
+    background: linear-gradient(180deg, #3b82f6, #1d4ed8);
+    border: 1px solid #1e40af;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .5), inset 0 -3px 6px rgba(0, 0, 0, .18), 0 3px 6px rgba(0, 0, 0, .22);
+  }
+  .about__logo svg {
+    @apply h-[26px] w-[26px];
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  .about__title { @apply flex flex-1 flex-col leading-tight; }
+  .about__title strong { @apply text-[1.2rem] font-extrabold; }
+  .about__title em {
+    @apply text-[0.7rem] font-bold uppercase tracking-[0.18em] not-italic text-[#2f7fd8];
+  }
+  .about__badge {
+    @apply rounded-full px-2.5 py-1 text-[0.7rem] font-extrabold text-[#6b84a0];
+    background: linear-gradient(180deg, #ffffff, #eaf1fb);
+    border: 1px solid #cdddf0;
+    box-shadow: inset 0 2px 5px rgba(0, 0, 0, .08);
+  }
+  .about__desc { @apply text-[13px] leading-relaxed text-[#6b84a0]; }
+  .about__grid { @apply grid grid-cols-[1fr_1.3fr] gap-4; }
+  .about__panel { @apply flex flex-col gap-2.5; }
+  .about__panel-title {
+    @apply text-[11px] font-extrabold uppercase tracking-[0.6px] text-[#6b84a0];
+  }
+  .about__meta-rows { @apply flex flex-col gap-2; }
+  .about__row {
+    @apply flex justify-between rounded-lg px-2.5 py-1.5 text-[13px];
+    background: linear-gradient(180deg, #ffffff, #eaf1fb);
+    border: 1px solid #cdddf0;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .6), 0 3px 8px rgba(0, 0, 0, .12);
+  }
+  .about__label { @apply text-[#6b84a0]; }
+  .about__value { @apply font-bold; }
+  .about__shortcuts-list {
+    @apply grid list-none grid-cols-2 gap-x-3 gap-y-1.5;
+  }
+  .about__shortcuts-list li { @apply flex items-center gap-2 text-xs; }
+  .about__key {
+    @apply rounded px-1.5 py-0.5 font-mono text-[10.5px] whitespace-nowrap text-[#2f7fd8];
+    background: linear-gradient(180deg, #ffffff, #eaf1fb);
+    border: 1px solid #cdddf0;
+    border-bottom-width: 2px;
+    box-shadow: inset 0 2px 5px rgba(0, 0, 0, .08);
+  }
+  .about__shortcut-desc { @apply text-[#132436]; }
+
+  /* ========================= Price check ================================ */
+  .price-check__form { @apply gap-2; }
+  .price-check__search { @apply flex items-center gap-2; }
+  .price-check__barcode-icon { @apply flex items-center text-[#6b84a0]; }
+  .price-check__barcode-icon svg {
+    @apply h-[18px] w-[18px];
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+  }
+  .price-check__search input { @apply flex-1; }
+  .price-check__btn {
+    @apply cursor-pointer rounded-lg px-4 py-2.5 font-bold text-white;
+    background: linear-gradient(180deg, #3b82f6, #1d4ed8);
+    border: 1px solid #1e40af;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .5), inset 0 -3px 6px rgba(0, 0, 0, .18), 0 3px 6px rgba(0, 0, 0, .22);
+  }
+  .price-check__btn:hover { filter: brightness(1.06); }
+  .price-check__notfound { @apply text-[#b5504a]; }
+  .price-check__info {
+    @apply flex flex-col gap-2 rounded-xl p-4;
+    background: linear-gradient(180deg, #ffffff, #eaf1fb);
+    border: 1px solid #cdddf0;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .6), 0 3px 8px rgba(0, 0, 0, .12);
+  }
+  .price-check__main { @apply flex flex-col gap-0.5; }
+  .price-check__sku { @apply font-mono text-[11px] text-[#6b84a0]; }
+  .price-check__name { @apply text-[15px] font-extrabold; }
+  .price-check__cat { @apply text-[11.5px] text-[#6b84a0]; }
+  .price-check__price {
+    @apply text-[1.8rem] font-extrabold tabular-nums text-[#2f7fd8];
+  }
+  .price-check__barcode {
+    @apply font-mono text-[11px] tracking-[0.06em] text-[#6b84a0];
+  }
+
+  /* ========================= Product Search (F2) ======================== */
+  .ps { @apply flex min-h-0 flex-1 flex-col gap-3; }
+  .ps__hint { @apply flex-none text-[12.5px] text-[#4a617c]; }
+  .ps__hint strong { @apply text-[#2f7fd8]; }
+  .ps__search { @apply flex flex-none items-center gap-2; }
+  .ps__field {
+    @apply flex min-w-0 flex-1 items-center gap-2.5 rounded-xl px-3.5 py-2.5;
+    background: linear-gradient(180deg, #ffffff, #eaf1fb);
+    border: 1px solid #9fbad9;
+    box-shadow: inset 0 2px 5px rgba(0, 0, 0, .08);
+  }
+  .ps__field:focus-within {
+    border-color: #2f7fd8;
+    outline: 2px solid #2f7fd8;
+    outline-offset: 2px;
+  }
+  .ps__field-icon { @apply flex items-center text-[#6b84a0]; }
+  .ps__field-icon svg {
+    @apply h-4 w-4;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  .ps__input {
+    @apply m-0 block h-full w-full min-w-0 flex-1 bg-transparent p-0 text-[13.5px] text-[#132436];
+    border: none;
+    outline: none;
+  }
+  .ps__btn {
+    @apply cursor-pointer whitespace-nowrap rounded-lg px-5 py-2.5 text-[13px] font-bold text-white;
+    background: linear-gradient(180deg, #3b82f6, #1d4ed8);
+    border: 1px solid #1e40af;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .5), inset 0 -3px 6px rgba(0, 0, 0, .18), 0 3px 6px rgba(0, 0, 0, .22);
+  }
+  .ps__btn:hover { filter: brightness(1.06); }
+
+  /* Results table — fixed-height scroll region inside the dialog. */
+  .ps__table-wrap {
+    @apply min-h-0 flex-1 overflow-y-auto rounded-xl;
+    background: linear-gradient(180deg, #f5f8fc, #e9eff8);
+    border: 1px solid #cdddf0;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .6);
+  }
+  .ps__table { @apply w-full table-fixed border-collapse; border-collapse: separate; border-spacing: 0; }
+  .ps__table th {
+    @apply sticky top-0 z-10 whitespace-nowrap bg-[#edf2f9] px-[14px] py-[11px] text-left text-[10.5px] font-bold uppercase tracking-[0.5px] text-[#6b84a0];
+    border-bottom: 1px solid #cdddf0;
+  }
+  .ps__col-item { width: auto; }
+  .ps__col-sku { width: 130px; }
+  .ps__col-price { width: 130px; }
+  .ps__table th.ps__col-sku,
+  .ps__table th.ps__col-price { text-align: right; }
+  .ps__table td { @apply whitespace-nowrap px-[14px] py-[11px] align-middle text-[13px]; border-bottom: 1px solid #cdddf0; }
+  .ps__row { @apply cursor-pointer; }
+  .ps__row:last-child td { border-bottom: none; }
+  .ps__row:hover td { background: rgba(19, 36, 54, 0.035); }
+  .ps__row.is-active td {
+    background: rgba(59, 130, 246, 0.28);
+    background-clip: padding-box;
+  }
+  .ps__row.is-active td.ps__name { box-shadow: inset 3px 0 0 #1d4ed8; }
+  .ps__name { @apply font-bold text-[#132436]; }
+  .ps__sku { @apply text-right font-mono text-[11px] text-[#6b84a0]; }
+  .ps__price { @apply text-right font-bold tabular-nums; }
+
+  /* Centered empty / no-results state (no table shown). */
+  .ps__state {
+    @apply flex min-h-0 flex-1 flex-col items-center justify-center gap-2 rounded-xl text-center;
+    background: linear-gradient(180deg, #f5f8fc, #e9eff8);
+    border: 1px dashed #93aacb;
+    box-shadow: inset 0 2px 5px rgba(0, 0, 0, .05);
+    padding: 24px;
+  }
+  .ps__state-icon {
+    @apply mb-1 flex h-14 w-14 items-center justify-center rounded-full text-[#2f7fd8];
+    background: linear-gradient(180deg, #ffffff, #eaf1fb);
+    border: 1px solid #cdddf0;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .6), 0 3px 8px rgba(0, 0, 0, .12);
+  }
+  .ps__state-icon svg {
+    @apply h-7 w-7;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.8;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  .ps__state--none .ps__state-icon { @apply text-[#b5504a]; }
+  .ps__state-title { @apply text-[15px] font-extrabold text-[#132436]; }
+  .ps__state-sub { @apply max-w-[320px] text-[12.5px] leading-relaxed text-[#4a617c]; }
+  .ps__state-sub strong { @apply text-[#2f7fd8]; }
+  /* ========================= Printer settings =========================== */
+  .settings { @apply flex flex-col gap-4; }
+  .settings__status {
+    @apply rounded-lg px-3 py-2.5 text-[12.5px] text-[#132436];
+    background: rgba(47, 127, 216, 0.12);
+    border: 1px solid rgba(47, 127, 216, 0.45);
+  }
+.settings__status {
+    @apply rounded-lg px-3 py-2.5 text-[12.5px] text-[#132436];
+    background: rgba(47, 127, 216, 0.12);
+    border: 1px solid rgba(47, 127, 216, 0.45);
+  }
+  /* Port suggestions shown after a failed raw test (click to select + retry). */
+  .settings-hint { @apply flex flex-col gap-2; }
+  .settings-hint__title {
+    @apply text-[11px] font-extrabold uppercase tracking-wider text-[#6b84a0];
+  }
+  .settings__seg { @apply grid grid-cols-3 gap-2; }
+  .settings__seg-btn {
+    @apply cursor-pointer rounded-lg px-2 py-2.5 text-xs font-semibold text-[#132436];
+    background: linear-gradient(180deg, #ffffff, #eaf1fb);
+    border: 1px solid #cdddf0;
+    box-shadow: inset 0 2px 5px rgba(0, 0, 0, .08);
+  }
+  .settings__seg-btn.is-active {
+    @apply text-white;
+    background: linear-gradient(180deg, #3b82f6, #1d4ed8);
+    border-color: #1e40af;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .5), inset 0 -3px 6px rgba(0, 0, 0, .18), 0 3px 6px rgba(0, 0, 0, .22);
+  }
+  .settings__check { @apply flex cursor-pointer items-center gap-2 text-[13px]; }
+  .settings__check input {
+    @apply h-[18px] w-[18px];
+    accent-color: #2f7fd8;
+  }
+  .settings-bt { @apply flex flex-col gap-3; }
+  .settings-bt__head {
+    @apply flex items-center justify-between gap-2;
+  }
+  .settings-bt__head label {
+    @apply text-xs font-bold uppercase tracking-[0.4px] text-[#6b84a0];
+  }
+  .settings__refresh {
+    @apply cursor-pointer rounded-md px-2.5 py-1 text-[11px] font-bold text-[#2f7fd8];
+    background: rgba(47, 127, 216, 0.1);
+    border: 1px solid rgba(47, 127, 216, 0.35);
+  }
+  .settings__refresh:hover { background: rgba(47, 127, 216, 0.18); }
+  .settings__refresh:disabled { @apply cursor-not-allowed opacity-50; }
+  .settings-bt label {
+    @apply text-xs font-bold uppercase tracking-[0.4px] text-[#6b84a0];
+  }
+  .settings__bt-list { @apply flex list-none flex-col gap-2; }
+  .settings__bt-head { @apply flex items-center justify-between text-xs text-[#6b84a0]; }
+  .settings__port {
+    @apply flex cursor-pointer items-center gap-2.5 rounded-lg p-3;
+    background: linear-gradient(180deg, #ffffff, #eaf1fb);
+    border: 1px solid #cdddf0;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .6), 0 3px 8px rgba(0, 0, 0, .12);
+  }
+  .settings__port:hover { border-color: #b7cdea; }
+  .settings__port.is-active {
+    background: rgba(47, 127, 216, 0.12);
+    border-color: #2f7fd8;
+    outline: 2px solid #2f7fd8;
+    outline-offset: -2px;
+  }
+  .settings__port-name { @apply font-mono font-extrabold text-[#2f7fd8]; }
+  .settings__port-desc {
+    @apply min-w-0 flex-1 truncate text-xs text-[#6b84a0];
+  }
+  .settings__bt-badge {
+    @apply rounded px-1.5 py-0.5 text-[10px] font-extrabold tracking-[0.06em] text-[#2f7fd8];
+    background: rgba(47, 127, 216, 0.12);
+  }
+  .settings__no { @apply text-xs italic text-[#6b84a0]; }
+  .settings__bt-note { @apply mt-0; }
+
+  /* ========================= Cancel transaction ========================= */
+  .cancel {
+    @apply flex flex-col items-center gap-3 p-4 text-center;
+  }
+  .cancel__icon {
+    @apply grid h-16 w-16 place-items-center rounded-full text-white;
+    background: linear-gradient(180deg, #d96a63, #b5504a);
+    border: 1px solid #8f3b36;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4), inset 0 -3px 6px rgba(0, 0, 0, 0.18), 0 3px 6px rgba(0, 0, 0, 0.2);
+  }
+  .cancel__icon svg {
+    @apply h-[34px] w-[34px];
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  .cancel__title { @apply text-[1.25rem] font-extrabold; }
+  .cancel__desc { max-width: 340px; }
+/* ===================== PosPilot integration (sign-out button) ============ */
+.pos-header__logout {
+  @apply ml-2 cursor-pointer rounded-lg border px-3 py-1.5 text-[12px] font-bold;
+  border-color: #1e40af;
+  color: #1d4ed8;
+  background: linear-gradient(180deg, #ffffff, #eaf1fb);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.6), 0 1px 3px rgba(0,0,0,.18);
+  transition: background 0.12s ease, color 0.12s ease;
+}
+/* Keep the "Sign out" text visible on hover — the global App.css hover was
+   setting color:#fff which vanished against the light gradient. */
+.pos-header__logout:hover {
+  background: linear-gradient(180deg, #2563eb, #1d4ed8);
+  color: #ffffff;
+  border-color: #1e40af;
+}
+/* ==========================================================================
+   PosPilot global-CSS neutralisation
+   --------------------------------------------------------------------------
+   PosPilot's App.css defines .pos-header / .pos-header__brand /
+   .pos-header__meta / .pos-main / .barcode-search as unlayered rules and sets
+   additional properties (grid + padding + gap on .pos-main, color on the
+   header, flex on .barcode-search) that the StockPos design never overrides,
+   so they leak into the cashier screen. These resets are unlayered, load
+   last, and are scoped under .pos-shell, so the cashier mode uses exactly the
+   StockPos Pilot layout — no extra padding/gap, no sidebar grid, no header
+   colour bleed, no shrink-to-fit search field.
+   ========================================================================== */
+
+.pos-shell .pos-main {
+  display: flex;
+  flex-direction: row;
+  flex: 1 1 0%;
+  height: auto;
+  max-height: none;
+  min-height: 0;
+  gap: 0;
+  padding: 0;
+  align-items: stretch;
+  overflow: visible;
+  grid-template-columns: none;
+  grid-template-rows: none;
+}
+
+.pos-shell .pos-main::before {
+  content: none;
+  display: none;
+}
+
+.pos-shell .pos-header {
+  background: transparent;
+  color: inherit;
+}
+
+.pos-shell .pos-header__brand {
+  gap: 0;
+}
+
+.pos-shell .pos-header__meta {
+  color: inherit;
+  font-size: inherit;
+}
+
+.pos-shell .barcode-search {
+  display: block;
+  flex: none;
+  align-items: initial;
+  gap: 0;
+  min-width: 0;
+  max-width: none;
+}
+/* ======================= Cash Float / Register Gate ======================= */
+.pos-frame--gate {
+  border-color: #3b82f6;
+}
+
+.register-gate {
+  @apply flex min-h-0 flex-1 items-center justify-center;
+  padding: 0;
+}
+
+.standby__hint {
+  @apply max-w-[420px] rounded-lg px-3 py-2 text-xs font-semibold text-[#6b84a0];
+  background: linear-gradient(180deg, #ffffff, #eaf1fb);
+  border: 1px solid #cdddf0;
+}
+
+/* ==================== Denomination count grid ============================ */
+.denom-count {
+  @apply flex flex-col gap-3;
+}
+
+.denom-grid {
+  @apply flex flex-col overflow-hidden rounded-xl;
+  background: linear-gradient(180deg, #ffffff, #eaf1fb);
+  border: 1px solid #cdddf0;
+  box-shadow: inset 0 2px 5px rgba(0, 0, 0, .08);
+}
+
+.denom-grid__header {
+  @apply grid grid-cols-[110px_1fr_120px] items-center gap-2 border-b border-[#cdddf0] px-3 py-2 text-[10px] font-extrabold uppercase tracking-wider text-[#6b84a0];
+}
+
+.denom-grid__group-title {
+  @apply border-b border-[#e2e9f2] px-3 py-1.5 text-[10px] font-extrabold uppercase tracking-wider text-[#2f7fd8];
+  background: rgba(47, 127, 216, .06);
+}
+
+.denom-grid__row {
+  @apply grid grid-cols-[110px_1fr_120px] items-center gap-2 border-b border-[#e2e9f2] px-3 py-1.5 text-[13px];
+}
+.denom-grid__row:last-of-type { border-bottom: none; }
+.denom-grid__row.is-compact { @apply py-1 text-[12px]; }
+
+.denom-grid__name {
+  @apply flex flex-col leading-tight text-[#6b84a0];
+}
+.denom-grid__name strong { @apply text-[#132436]; }
+
+.denom-grid__qty-wrap {
+  @apply flex items-center justify-center gap-2;
+}
+.denom-grid__qty {
+  @apply w-20 rounded-lg border border-[#cdddf0] px-2 py-1 text-center text-sm font-bold text-[#132436] outline-none;
+  background: #fff;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, .06);
+}
+.denom-grid__qty:focus { border-color: #2f7fd8; outline: 2px solid rgba(47, 127, 216, .25); }
+.denom-grid__times { @apply text-[#6b84a0]; }
+.denom-grid__denom { @apply font-semibold text-[#2f7fd8]; }
+.denom-grid__subtotal { @apply text-right font-bold text-[#132436]; }
+
+.denom-count__total {
+  @apply flex items-center justify-between rounded-xl px-4 py-3 text-sm font-bold text-[#132436];
+  background: linear-gradient(180deg, #ffffff, #eaf1fb);
+  border: 1px solid #9fbad9;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .6), 0 3px 8px rgba(0, 0, 0, .12);
+}
+.denom-count__total strong { @apply text-base font-extrabold; color: #1d4ed8; }
+
+/* ==================== Open Register dialog =============================== */
+.open-register {
+  max-width: 680px;
+}
+.open-register__tabs {
+  @apply mb-3 flex gap-2;
+}
+.open-register__tab {
+  @apply flex-1 rounded-lg border border-[#cdddf0] px-3 py-2 text-[13px] font-bold text-[#6b84a0];
+  background: linear-gradient(180deg, #ffffff, #eaf1fb);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .6);
+}
+.open-register__tab.is-active {
+  color: #fff;
+  background: linear-gradient(180deg, #3b82f6, #1d4ed8);
+  border-color: #1e40af;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .35), inset 0 -3px 6px rgba(0, 0, 0, .18);
+}
+.open-register__amount {
+  @apply mb-3 flex flex-col gap-2;
+}
+.open-register__preview {
+  @apply mt-3 flex items-center justify-between rounded-xl px-4 py-3 text-sm font-bold text-[#132436];
+  background: linear-gradient(180deg, #ffffff, #eaf1fb);
+  border: 1px solid #9fbad9;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .6), 0 3px 8px rgba(0, 0, 0, .12);
+}
+.open-register__preview strong { @apply text-xl font-extrabold; color: #1d4ed8; }
+
+/* ==================== Cash movement dialog =============================== */
+.cash-movement {
+  max-width: 520px;
+}
+.cash-movement__manager-note {
+  @apply rounded-lg border border-[#e8934a] bg-[#fef3e2] px-3 py-2 font-bold text-[#9c541f];
+}
+.dialog__error {
+  @apply mb-3 rounded-lg border border-[#f0b7b7] bg-[#fdecec] px-3 py-2 text-[13px] font-bold text-[#b91c1c];
+}
+.dialog__text-input {
+  @apply mb-3 w-full rounded-lg border border-[#cdddf0] px-3 py-2 text-[13px] font-semibold text-[#132436] outline-none;
+  background: #fff;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, .06);
+}
+.dialog__text-input:focus { border-color: #2f7fd8; outline: 2px solid rgba(47, 127, 216, .25); }
+.dialog__footer-row {
+  @apply mt-2 flex items-center justify-between rounded-lg border border-[#e2e9f2] bg-[#f6faff] px-3 py-2;
+}
+.dialog__footer-row strong { @apply text-[#1d4ed8]; }
+.dialog__footer-actions {
+  @apply mt-3 flex justify-end gap-2;
+}
+/* ==================== Close register dialog ============================== */
+.close-register {
+  max-width: 760px;
+}
+.close-register__summary {
+  @apply mb-3 overflow-hidden rounded-xl;
+  background: linear-gradient(180deg, #ffffff, #eaf1fb);
+  border: 1px solid #cdddf0;
+  box-shadow: inset 0 2px 5px rgba(0, 0, 0, .08);
+}
+.close-register__row {
+  @apply flex items-center justify-between border-b border-[#e2e9f2] px-4 py-2 text-[13px] font-bold text-[#132436];
+}
+.close-register__row span { @apply text-[11px] font-extrabold uppercase tracking-wider text-[#6b84a0]; }
+.close-register__row.is-bold span { @apply text-[#1d4ed8]; }
+.close-register__row.is-bold strong { @apply text-lg font-extrabold; color: #1d4ed8; }
+.close-register__expected {
+  background: #eef4ff;
+}
+.close-register__compare {
+  @apply mt-3 grid grid-cols-2 gap-3;
+}
+.close-register__compare > div {
+  @apply flex flex-col items-center gap-1 rounded-xl px-3 py-3;
+  background: linear-gradient(180deg, #ffffff, #eaf1fb);
+  border: 1px solid #cdddf0;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .6), 0 3px 8px rgba(0, 0, 0, .12);
+}
+.close-register__compare span { @apply text-[11px] font-extrabold uppercase tracking-wider text-[#6b84a0]; }
+.close-register__compare strong { @apply text-lg font-extrabold; }
+.close-register__compare .is-exact strong { color: #15803d; }
+.close-register__compare .is-over strong { color: #b45309; }
+.close-register__compare .is-short strong { color: #b91c1c; }
+.close-register__result {
+  @apply flex flex-col items-center gap-4;
+}
+.close-register__status {
+  @apply rounded-xl px-6 py-3 text-xl font-extrabold uppercase tracking-wider text-white;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .35), inset 0 -3px 6px rgba(0, 0, 0, .18);
+}
+.close-register__status.is-exact { background: linear-gradient(180deg, #22c55e, #15803d); }
+.close-register__status.is-over  { background: linear-gradient(180deg, #f59e0b, #b45309); }
+.close-register__status.is-short { background: linear-gradient(180deg, #ef4444, #b91c1c); }
+.close-register__result-grid {
+  @apply grid grid-cols-2 gap-x-8 gap-y-2;
+}
+.close-register__result-grid span { @apply text-right text-[13px] font-bold text-[#6b84a0]; }
+.close-register__result-grid strong { @apply text-[13px] font-extrabold text-[#132436]; }
+
+/* ==================== POS footer session bar ============================= */
+.pos-footer__open { color: #15803d; font-weight: 700; }
+.pos-footer__actions {
+  @apply flex items-center gap-2;
+}
+.pos-footer__link {
+  @apply rounded-md px-2 py-1 text-[11px] font-bold text-[#2f7fd8];
+  background: rgba(47, 127, 216, .08);
+  border: 1px solid rgba(47, 127, 216, .25);
+}
+.pos-footer__link:hover { background: rgba(47, 127, 216, .16); }
+
+@media print {
+  .pos-footer__actions { display: none !important; }
+}
+/* ==================== Item Not Found dialog ============================= */
+  /* Soft-amber acknowledgement popup for a scanned barcode with no product
+     match. Deliberately NOT red: it is informational ("nothing was added"),
+     not a hard error. The OK button uses the standard primary (blue) dialog
+     button so it reads as a neutral "got it" action. */
+  .dialog--notfound {
+    max-width: 430px;
+    text-align: center;
+  }
+
+  .dialog--notfound .dialog__body {
+    @apply items-center;
+  }
+
+  .notfound__icon {
+    @apply flex h-16 w-16 shrink-0 items-center justify-center rounded-full;
+    color: #b45309;
+    background: linear-gradient(180deg, #fef3c7, #fde68a);
+    border: 1px solid #f59e0b;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .6), 0 3px 8px rgba(180, 83, 9, .18);
+  }
+
+  .notfound__icon svg {
+    @apply h-8 w-8;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
+  .notfound__text {
+    @apply text-[15px];
+  }
+
+  .notfound__text strong {
+    @apply rounded-md bg-[#fef3c7] px-1.5 py-0.5 font-bold break-all text-[#92400e];
+  }
+
+  /* Full-width dialog button (used by the Item Not Found OK button). */
+  .dialog-btn--block {
+    @apply flex w-full items-center justify-center;
+  }

@@ -21,14 +21,28 @@ function hasExplicitFilters(params = {}) {
   );
 }
 
-function parseExpToSortKey(exp) {
-  if (!exp || typeof exp !== 'string') return null;
-  const match = exp.trim().match(/^([A-Z]{3})\s+(\d{4})$/i);
+function parseExpToSortKey(value) {
+  if (!value || typeof value !== 'string') return null;
+  const trimmed = value.trim();
+
+  // ISO dates, e.g. 2026-03 or 2026-03-15
+  const iso = trimmed.match(/^(\d{4})-(\d{1,2})(?:-(\d{1,2}))?$/);
+  if (iso) {
+    const year = Number(iso[1]);
+    const month = Number(iso[2]);
+    if (month < 1 || month > 12) return null;
+    return year * 12 + month;
+  }
+
+  // Month-name forms, e.g. "MAR 2026", "Mar 26", "MAR.2026"
+  const match = trimmed.match(/^([A-Z]{3})[.\s]*(\d{2,4})$/i);
   if (!match) return null;
   const months = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
   const monthIndex = months.indexOf(match[1].toUpperCase());
   if (monthIndex === -1) return null;
-  return Number(match[2]) * 12 + monthIndex;
+  let year = Number(match[2]);
+  if (year < 100) year += 2000;
+  return year * 12 + (monthIndex + 1);
 }
 
 /**
@@ -85,10 +99,8 @@ function buildProductSearchQuery(params = {}) {
     conditions.push(`(${STOCK_STATUS_SQL[params.stockStatus]})`);
   }
 
-  if (params.expBefore) {
-    conditions.push('exp IS NOT NULL AND exp != ?');
-    bindings.push('');
-  }
+  // NOTE: expiry filtering happens in JS against inventory_batches (see
+  // filterByExpiration), because products don't carry an `exp` column.
 
   const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
 

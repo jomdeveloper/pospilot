@@ -1,9 +1,17 @@
 const express = require('express');
 const db = require('../db');
-const { requireAdministrator, requireCategoryManager } = require('./auth');
+const { authenticate, requireAdministrator, requireCategoryManager } = require('./auth');
 const { auditLog } = require('../audit');
 
 const router = express.Router();
+
+const ALLOWED_SUBCATEGORY_FIELDS = new Set([
+  'Expiry date', 'Storage condition', 'Batch/lot number', 'Prescription required',
+  'FDA registration number', 'Price per kilo', 'Net weight', 'Size', 'Color',
+  'Material', 'Warranty period', 'Serial number', 'Duration', 'Service fee',
+  'Linked component products',
+]);
+const ALLOWED_FIELD_TYPES = new Set(['date', 'text', 'number', 'boolean']);
 
 function parseProductTypeDefinitions(value) {
   if (Array.isArray(value)) {
@@ -25,9 +33,10 @@ function parseProductTypeDefinitions(value) {
                 if (!attribute || typeof attribute !== 'object') return null;
                 const attributeName = String(attribute.name || attribute.label || '').trim();
                 if (!attributeName) return null;
+                if (!ALLOWED_SUBCATEGORY_FIELDS.has(attributeName)) return null;
                 return {
                   name: attributeName,
-                  dataType: String(attribute.dataType || attribute.type || 'text').trim() || 'text',
+                  dataType: ALLOWED_FIELD_TYPES.has(String(attribute.dataType || attribute.type || 'text').trim()) ? String(attribute.dataType || attribute.type || 'text').trim() : 'text',
                   required: Boolean(attribute.required),
                   options: Array.isArray(attribute.options) ? attribute.options : [],
                   validation: attribute.validation && typeof attribute.validation === 'object' ? attribute.validation : null,
@@ -69,7 +78,7 @@ function parseProductTypeDefinitions(value) {
   return [];
 }
 
-router.get('/', (req, res) => {
+router.get('/', authenticate, (req, res) => {
   const products = db.prepare('SELECT category, stock FROM products').all();
   const counts = new Map();
   products.forEach((product) => {
@@ -88,6 +97,7 @@ router.get('/', (req, res) => {
     counts.get(category.name).status = category.status || 'Active';
     const types = db.prepare('SELECT id, name, description FROM product_types WHERE category_name = ? AND active = 1 ORDER BY name').all(category.name);
     counts.get(category.name).productTypes = types.map((row) => row.name);
+    counts.get(category.name).subcategories = types.map((row) => row.name);
     counts.get(category.name).productTypeDefinitions = types.map((type) => ({
       name: type.name,
       description: type.description || '',
@@ -102,12 +112,13 @@ router.post('/', requireCategoryManager, (req, res) => {
   const name = String(req.body.name || '').trim();
   const description = String(req.body.description || '').trim() || null;
   const status = req.body.status === 'Inactive' ? 'Inactive' : 'Active';
-  const productTypes = parseProductTypeDefinitions(req.body.productTypes);
-  const normalizedProductTypes = productTypes.length > 0 ? productTypes : [{ name: 'Other', description: '', attributes: [] }];
+  const productTypes = parseProductTypeDefinitions(req.body.subcategories ?? req.body.productTypes);
+  const normalizedProductTypes = productTypes;
 
   if (!name) return res.status(400).json({ error: 'Category name is required' });
 
   try {
+    const createCategory = db.transaction(() => {
     db.prepare('INSERT INTO categories (name, description, status) VALUES (?, ?, ?)').run(name, description, status);
 
     const insertType = db.prepare('INSERT OR IGNORE INTO product_types (name, category_name, description) VALUES (?, ?, ?)');
@@ -144,6 +155,8 @@ router.post('/', requireCategoryManager, (req, res) => {
       });
     });
 
+    });
+    createCategory();
     res.status(201).json({
       name,
       description: description || '',
@@ -151,6 +164,7 @@ router.post('/', requireCategoryManager, (req, res) => {
       productCount: 0,
       stockTotal: 0,
       productTypes: normalizedProductTypes.map((type) => String(type.name).trim()).filter(Boolean),
+      subcategories: normalizedProductTypes.map((type) => String(type.name).trim()).filter(Boolean),
     });
     auditLog(req, 'Created category', 'Category', name, { productTypes: normalizedProductTypes });
   } catch (error) {
@@ -163,17 +177,24 @@ router.patch('/:categoryName', requireCategoryManager, (req, res) => {
   const name = String(req.body.name || '').trim();
   const description = String(req.body.description || '').trim() || null;
   const status = req.body.status === 'Inactive' ? 'Inactive' : 'Active';
-  const productTypes = parseProductTypeDefinitions(req.body.productTypes);
-  const normalizedProductTypes = productTypes.length > 0 ? productTypes : [{ name: 'Other', description: '', attributes: [] }];
+  const productTypes = parseProductTypeDefinitions(req.body.subcategories ?? req.body.productTypes);
+  const normalizedProductTypes = productTypes;
   const existing = db.prepare('SELECT name FROM categories WHERE name = ?').get(existingName);
   if (!existing) return res.status(404).json({ error: 'Category not found' });
   if (!name) return res.status(400).json({ error: 'Category name is required' });
 
   try {
     const update = db.transaction(() => {
+      const existingTypes = db.prepare('SELECT id, name FROM product_types WHERE category_name = ?').all(existingName);
+      const retainedNames = new Set(normalizedProductTypes.map((type) => String(type.name || '').trim()).filter(Boolean));
+      const removedTypes = existingTypes.filter((type) => !retainedNames.has(type.name));
+      const productsUsingRemovedType = removedTypes.find((type) => db.prepare('SELECT 1 FROM products WHERE category = ? AND product_type = ? LIMIT 1').get(existingName, type.name));
+      if (productsUsingRemovedType) throw new Error(`SUBCATEGORY_IN_USE:${productsUsingRemovedType.name}`);
+
       db.prepare('UPDATE categories SET name = ?, description = ?, status = ? WHERE name = ?').run(name, description, status, existingName);
       db.prepare('UPDATE products SET category = ? WHERE category = ?').run(name, existingName);
       db.prepare('UPDATE product_types SET category_name = ? WHERE category_name = ?').run(name, existingName);
+      removedTypes.forEach((type) => db.prepare('DELETE FROM product_types WHERE id = ?').run(type.id));
       const insertType = db.prepare('INSERT OR IGNORE INTO product_types (name, category_name, description) VALUES (?, ?, ?)');
       const insertDefinition = db.prepare('INSERT OR IGNORE INTO product_attribute_definitions (product_type_id, name, data_type, required, display_order, active) VALUES (?, ?, ?, ?, ?, 1)');
       normalizedProductTypes.forEach((type) => {
@@ -189,8 +210,11 @@ router.patch('/:categoryName', requireCategoryManager, (req, res) => {
     });
     update();
     auditLog(req, 'Updated category', 'Category', name, { previousName: existingName, productTypes: normalizedProductTypes });
-    res.json({ name, description: description || '', status, productTypes: normalizedProductTypes.map((type) => type.name).filter(Boolean) });
+    res.json({ name, description: description || '', status, productTypes: normalizedProductTypes.map((type) => type.name).filter(Boolean), subcategories: normalizedProductTypes.map((type) => type.name).filter(Boolean) });
   } catch (error) {
+    if (String(error.message).startsWith('SUBCATEGORY_IN_USE:')) {
+      return res.status(409).json({ error: `Subcategory "${String(error.message).slice('SUBCATEGORY_IN_USE:'.length)}" is used by existing products` });
+    }
     res.status(String(error.message).includes('UNIQUE') ? 409 : 500).json({ error: 'Category already exists or could not be updated' });
   }
 });

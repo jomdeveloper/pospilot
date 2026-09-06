@@ -1,9 +1,10 @@
 const express = require('express');
 const db = require('../db');
+const { authenticate } = require('./auth');
 
 const router = express.Router();
 
-router.get('/', (req, res) => {
+router.get('/', authenticate, (req, res) => {
   const query = String(req.query.q || '').trim();
   const customers = query
     ? db.prepare("SELECT * FROM customers WHERE name LIKE ? OR COALESCE(phone, '') LIKE ? OR COALESCE(email, '') LIKE ? OR COALESCE(member_id, '') LIKE ? ORDER BY name ASC").all(...Array(4).fill(`%${query}%`))
@@ -11,7 +12,7 @@ router.get('/', (req, res) => {
   res.json(customers);
 });
 
-router.post('/', (req, res) => {
+router.post('/', authenticate, (req, res) => {
   const name = String(req.body.name || '').trim();
   const phone = String(req.body.phone || '').trim() || null;
   const email = String(req.body.email || '').trim() || null;

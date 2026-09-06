@@ -10,7 +10,7 @@ const PAYMENT_OPTIONS = [
   { id: "bank", label: "Bank Transfer", icon: Landmark },
 ];
 
-export default function PaymentModal({ t, method, setMethod, total, onClose, onConfirm }) {
+export default function PaymentModal({ t, method, setMethod, total, cashReceived, setCashReceived, onClose, onConfirm }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(15,23,42,0.5)" }}>
       <div className="w-full max-w-sm rounded-2xl p-5" style={{ background: t.card }} onClick={(e) => e.stopPropagation()}>
@@ -34,6 +34,7 @@ export default function PaymentModal({ t, method, setMethod, total, onClose, onC
           <span className="text-xs font-semibold" style={{ color: t.sub }}>Amount Due</span>
           <span className="font-extrabold" style={{ color: t.text }}>{money(total)}</span>
         </div>
+        {method === "cash" && <label className="block mb-4"><span className="text-xs font-semibold mb-1 block" style={{ color: t.sub }}>Cash received</span><input type="number" min={total} step="0.01" value={cashReceived} onChange={(event) => setCashReceived(event.target.value)} autoFocus className="w-full px-3 py-2.5 rounded-xl text-sm outline-none" style={{ background: t.bg, color: t.text, border: `1px solid ${t.border}` }} /></label>}
         <Button t={t} className="w-full" size="lg" onClick={onConfirm}>Confirm Payment</Button>
       </div>
     </div>

@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect } from "react";
-import { AlertCircle, Baby, Search, Filter, Upload, Download, Eye, HeartPulse, Package, Pencil, Pill, Plus, Scissors, ShoppingBasket, Sparkles, Stethoscope, Trash2, ChevronLeft, ChevronRight, AlertTriangle, X } from "lucide-react";
+import { AlertCircle, Baby, Search, Download, Eye, HeartPulse, Package, Pencil, Pill, Plus, Scissors, ShoppingBasket, Sparkles, Stethoscope, Trash2, ChevronLeft, ChevronRight, AlertTriangle, X } from "lucide-react";
 import Card from "../components/ui/Card";
 import Button from "../components/ui/Button";
 import Badge from "../components/ui/Badge";
@@ -27,11 +27,18 @@ export default function ProductsPage({ t, sessionToken, loggedInRole }) {
   const [deleteError, setDeleteError] = useState("");
   const [deleting, setDeleting] = useState(false);
   const [categories, setCategories] = useState([]);
+  const [loadError, setLoadError] = useState("");
+  const [page, setPage] = useState(1);
+  const pageSize = 24;
   const isAdministrator = ["administrator", "admin"].includes(String(loggedInRole || "").trim().toLowerCase());
 
   useEffect(() => {
-    getProducts().then(setProducts);
-    getProductMetadata().then((data) => setCategories(data.categories || []));
+    Promise.all([getProducts(), getProductMetadata()])
+      .then(([nextProducts, metadata]) => {
+        setProducts(nextProducts);
+        setCategories(metadata.categories || []);
+      })
+      .catch((error) => setLoadError(error.message || "Unable to load products"));
   }, []);
 
   const refreshProducts = () => getProducts().then(setProducts);
@@ -54,10 +61,31 @@ export default function ProductsPage({ t, sessionToken, loggedInRole }) {
   const filtered = useMemo(() => {
     return products.filter((p) => {
       const matchQ = (p.name + p.brand + p.barcode).toLowerCase().includes(query.toLowerCase());
-      const matchCat = catFilter === "all" || p.cat === catFilter;
+      const matchCat = catFilter === "all" || p.category === catFilter;
       return matchQ && matchCat;
     });
   }, [products, query, catFilter]);
+  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const visibleProducts = filtered.slice((page - 1) * pageSize, page * pageSize);
+  useEffect(() => {
+    setPage(1);
+  }, [query, catFilter]);
+  useEffect(() => {
+    setPage((current) => Math.min(current, totalPages));
+  }, [totalPages]);
+  const exportProducts = () => {
+    const escape = (value) => `"${String(value ?? "").replaceAll('"', '""')}"`;
+    const csv = [
+      ["Name", "SKU", "Barcode", "Category", "Product Type", "Price", "Stock"],
+      ...filtered.map((product) => [product.name, product.sku, product.barcode, product.category, product.product_type, product.price, product.stock]),
+    ].map((row) => row.map(escape).join(",")).join("\n");
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "pospilot-products.csv";
+    link.click();
+    URL.revokeObjectURL(url);
+  };
 
   const statusOf = (p) =>
     p.stock === 0 ? { tone: "danger", label: "Out of stock" } : p.stock <= p.min ? { tone: "warning", label: "Low stock" } : { tone: "success", label: "In stock" };
@@ -75,12 +103,11 @@ export default function ProductsPage({ t, sessionToken, loggedInRole }) {
             <option value="all">All categories</option>
             {categories.map((category) => <option key={category.name} value={category.name}>{category.name}</option>)}
           </select>
-          <Button t={t} variant="outline"><Filter size={14} /> Filters</Button>
-          <Button t={t} variant="outline"><Upload size={14} /> Import</Button>
-          <Button t={t} variant="outline"><Download size={14} /> Export</Button>
-          <Button t={t} onClick={() => { setViewOnly(false); setShowForm(true); }}><Plus size={15} /> Add Product</Button>
+          <Button t={t} variant="outline" onClick={exportProducts}><Download size={14} /> Export</Button>
+          {isAdministrator || ["manager"].includes(String(loggedInRole || "").trim().toLowerCase()) ? <Button t={t} onClick={() => { setViewOnly(false); setShowForm(true); }}><Plus size={15} /> Add Product</Button> : null}
         </div>
       </Card>
+      {loadError && <div className="rounded-xl px-4 py-3 text-sm" style={{ background: t.dangerSoft, color: t.danger }}>{loadError}</div>}
 
       <Card t={t} className="overflow-hidden">
         <div className="overflow-x-auto">
@@ -93,7 +120,7 @@ export default function ProductsPage({ t, sessionToken, loggedInRole }) {
               </tr>
             </thead>
             <tbody>
-              {filtered.map((p) => {
+              {visibleProducts.map((p) => {
                 const st = statusOf(p);
                 const ProductIcon = CATEGORY_ICONS[p.category || p.cat] || Package;
                 const imageUrl = p.image_url || p.imageUrl;
@@ -136,11 +163,11 @@ export default function ProductsPage({ t, sessionToken, loggedInRole }) {
           </table>
         </div>
         <div className="flex items-center justify-between px-4 py-3 text-xs" style={{ borderTop: `1px solid ${t.border}`, color: t.sub }}>
-          <span>Showing {filtered.length} of {products.length} products</span>
+          <span>Showing {filtered.length ? (page - 1) * pageSize + 1 : 0}-{Math.min(page * pageSize, filtered.length)} of {filtered.length} products</span>
           <div className="flex items-center gap-1">
-            <button className="w-7 h-7 rounded-lg flex items-center justify-center" style={{ background: t.bg }}><ChevronLeft size={14} /></button>
-            <span className="px-2 font-semibold" style={{ color: t.text }}>1</span>
-            <button className="w-7 h-7 rounded-lg flex items-center justify-center" style={{ background: t.bg }}><ChevronRight size={14} /></button>
+            <button type="button" disabled={page <= 1} onClick={() => setPage((current) => Math.max(1, current - 1))} className="w-7 h-7 rounded-lg flex items-center justify-center disabled:opacity-40" style={{ background: t.bg }} aria-label="Previous page"><ChevronLeft size={14} /></button>
+            <span className="px-2 font-semibold" style={{ color: t.text }}>{page} / {totalPages}</span>
+            <button type="button" disabled={page >= totalPages} onClick={() => setPage((current) => Math.min(totalPages, current + 1))} className="w-7 h-7 rounded-lg flex items-center justify-center disabled:opacity-40" style={{ background: t.bg }} aria-label="Next page"><ChevronRight size={14} /></button>
           </div>
         </div>
       </Card>

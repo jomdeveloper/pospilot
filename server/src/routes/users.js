@@ -1,15 +1,11 @@
-const crypto = require('crypto');
 const express = require('express');
 const db = require('../db');
-const { requireAdministrator } = require('./auth');
+const { authenticate, requireAdministrator } = require('./auth');
 const { auditLog } = require('../audit');
+const { hashPassword, passwordPolicyError } = require('../security');
 
 const router = express.Router();
 const ROLES = ['Administrator', 'Manager', 'Pharmacist', 'Cashier', 'Inventory Clerk', 'Auditor'];
-
-function hashPassword(password, username) {
-  return crypto.scryptSync(String(password), String(username).toLowerCase(), 64).toString('hex');
-}
 
 function normalizeUser(row) {
   const { password_hash: _passwordHash, last_login, ...safeUser } = row;
@@ -19,7 +15,7 @@ function normalizeUser(row) {
   };
 }
 
-router.get('/', (req, res) => {
+router.get('/', authenticate, (req, res) => {
   const query = String(req.query.q || '').trim();
   const rows = query
     ? db.prepare(`
@@ -40,14 +36,18 @@ router.post('/', requireAdministrator, (req, res) => {
   const password = String(req.body.password || '');
 
   if (!name || !username || !password) return res.status(400).json({ error: 'Name, username, and password are required' });
+  const policyError = passwordPolicyError(password, username);
+  if (policyError) return res.status(400).json({ error: policyError });
   if (!ROLES.includes(role)) return res.status(400).json({ error: 'Invalid user role' });
   if (db.prepare('SELECT id FROM users WHERE username = ?').get(username)) return res.status(409).json({ error: 'Username already exists' });
 
   try {
     const result = db.prepare(`
-      INSERT INTO users (name, username, email, role, status, password_hash)
-      VALUES (?, ?, ?, ?, 'Active', ?)
+      INSERT INTO users (name, username, email, role, status, password_hash, must_change_password)
+      VALUES (?, ?, ?, ?, 'Active', ?, 1)
     `).run(name, username, email, role, hashPassword(password, username));
+    db.prepare('INSERT INTO password_history (user_id, password_hash) VALUES (?, ?)')
+      .run(result.lastInsertRowid, hashPassword(password, username));
     const user = db.prepare('SELECT * FROM users WHERE id = ?').get(result.lastInsertRowid);
     auditLog(req, 'Created user', 'User', user.id, { username: user.username, role: user.role });
     res.status(201).json(normalizeUser(user));
@@ -57,7 +57,7 @@ router.post('/', requireAdministrator, (req, res) => {
   }
 });
 
-router.patch('/:id/status', (req, res) => {
+router.patch('/:id/status', requireAdministrator, (req, res) => {
   const status = String(req.body.status || '').trim();
   if (!['Active', 'Inactive'].includes(status)) return res.status(400).json({ error: 'Invalid status' });
 
@@ -65,6 +65,9 @@ router.patch('/:id/status', (req, res) => {
   if (!user) return res.status(404).json({ error: 'User not found' });
   if (user.role === 'Administrator' && status === 'Inactive') {
     return res.status(403).json({ error: 'Administrator accounts cannot be deactivated' });
+  }
+  if (req.session.userId === user.id && status === 'Inactive') {
+    return res.status(403).json({ error: 'You cannot deactivate your own account' });
   }
 
   db.prepare('UPDATE users SET status = ? WHERE id = ?').run(status, req.params.id);

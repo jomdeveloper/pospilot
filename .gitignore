@@ -1,8 +1,12 @@
 node_modules/
 dist/
+.certs/
+certs/*.pem
 *.log
 .DS_Store
 server/data/*.db
 server/data/*.db-journal
 server/data/*.db-wal
 server/data/*.db-shm
+server/data/*.pre-restore-*
+server/data/backups/

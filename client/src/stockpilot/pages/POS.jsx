@@ -6,11 +6,14 @@ import Button from "../components/ui/Button";
 import PaymentModal from "./pos/PaymentModal";
 import ReceiptModal from "./pos/ReceiptModal";
 import { getProducts } from "../api/products";
-import { createSale } from "../api/sales";
+import { api } from "../../api";
 import { money } from "../theme";
+import { readStoreSettings } from "../settings";
+import { splitVat, roundMoney } from "../../cashierpos/utils/calculations";
 
-export default function POSPage({ t }) {
+export default function POSPage({ t, sessionToken }) {
   const [products, setProducts] = useState([]);
+  const [customers, setCustomers] = useState([]);
   const [query, setQuery] = useState("");
   const [catFilter, setCatFilter] = useState("all");
   const [cart, setCart] = useState([]);
@@ -19,50 +22,143 @@ export default function POSPage({ t }) {
   const [method, setMethod] = useState("cash");
   const [receiptOpen, setReceiptOpen] = useState(false);
   const [invoiceId, setInvoiceId] = useState("");
+  const [transactionRef, setTransactionRef] = useState("");
+  const [cashReceived, setCashReceived] = useState("");
+  const [customerId, setCustomerId] = useState(""); // PosPilot customers.id ("" = walk-in)
+  const [lastSale, setLastSale] = useState(null);
+  const [error, setError] = useState("");
+  const [session, setSession] = useState(null); // open cashier session (register gate)
 
-  useEffect(() => { getProducts().then(setProducts); }, []);
+  useEffect(() => {
+    getProducts().then(setProducts).catch((requestError) => setError(requestError.message || "Unable to load products"));
+    api.getCustomers()
+      .then((rows) => setCustomers(Array.isArray(rows) ? rows : []))
+      .catch(() => setCustomers([]));
+    if (sessionToken) {
+      api.getCurrentCashierSession(readStoreSettings().terminalName || "POS-02", sessionToken)
+        .then((res) => { if (res && res.session) setSession(res.session); })
+        .catch(() => {});
+    }
+  }, []);
 
   const filtered = useMemo(() => products.filter((p) => {
     const matchQ = (p.name + p.brand + p.barcode).toLowerCase().includes(query.toLowerCase());
-    const matchCat = catFilter === "all" || p.cat === catFilter;
-    return matchQ && matchCat && p.stock > 0;
+    const matchCat = catFilter === "all" || p.category === catFilter;
+    // The register may sell what is physically present even when the ledger
+    // shows low/zero stock — matches the cashier POS policy. Stock can go
+    // negative and is reconciled via Inventory → Stock Adjustment.
+    return matchQ && matchCat;
   }), [products, query, catFilter]);
+
+  // Resolve the live customer (from `customers` table) into the fields the
+  // backend sale expects — customerType + memberId drive the senior/PWD 20%.
+  const selectedCustomer = customers.find((c) => String(c.id) === String(customerId));
+  const rawCustomerType = selectedCustomer ? String(selectedCustomer.customer_type || "").trim().toLowerCase() : "";
+  const customerType =
+    rawCustomerType === "senior" ? "senior"
+      : rawCustomerType === "pwd" || rawCustomerType === "pwd discount" ? "pwd"
+        : rawCustomerType === "member" || rawCustomerType === "membership" ? "member"
+          : "walkin";
+  const customerName = selectedCustomer ? selectedCustomer.name : "Walk-in Customer";
+  const memberId = customerType === "member" ? String(selectedCustomer.member_id || "").trim() || null : null;
 
   const addToCart = (p) => {
     setCart((prev) => {
       const found = prev.find((i) => i.id === p.id);
       if (found) {
-        if (found.qty >= p.stock) return prev;
         return prev.map((i) => (i.id === p.id ? { ...i, qty: i.qty + 1 } : i));
       }
       return [...prev, { ...p, qty: 1 }];
     });
   };
-  const setQty = (id, qty) => setCart((prev) => prev.map((i) => (i.id === id ? { ...i, qty: Math.max(1, Math.min(qty, i.stock)) } : i)));
+  const setQty = (id, qty) => setCart((prev) => prev.map((i) => (i.id === id ? { ...i, qty: Math.max(1, qty) } : i)));
   const removeItem = (id) => setCart((prev) => prev.filter((i) => i.id !== id));
 
-  const subtotal = cart.reduce((s, i) => s + i.price * i.qty, 0);
-  const discount = subtotal * (discountPct / 100);
-  const taxable = subtotal - discount;
-  const tax = taxable * 0.12;
-  const total = taxable + tax;
+  // Reuse the exact server math: per-line VAT split on the discounted amount,
+  // and the senior/PWD 20% on the VAT-EXCLUSIVE amount, only for eligible lines.
+  const subtotal = roundMoney(cart.reduce((s, i) => s + i.price * i.qty, 0));
+  const itemDiscountTotal = roundMoney(cart.reduce((s, i) => s + i.price * i.qty * (discountPct / 100), 0));
+  let vatTotal = 0;
+  let seniorDiscountTotal = 0;
+  cart.forEach((item) => {
+    const discountedInclusive = roundMoney(item.price * item.qty - item.price * item.qty * (discountPct / 100));
+    const { vat, vatable } = splitVat(discountedInclusive);
+    vatTotal += vat;
+    if (customerType === "senior" || customerType === "pwd") {
+      const eligible = customerType === "senior" ? Boolean(item.senior_discount_eligible) : Boolean(item.pwd_discount_eligible);
+      if (eligible) seniorDiscountTotal = roundMoney(seniorDiscountTotal + roundMoney(vatable * 0.2));
+    }
+  });
+  const vat = roundMoney(vatTotal);
+  const seniorDiscountTotalR = roundMoney(seniorDiscountTotal);
+  const total = roundMoney(Math.max(subtotal - itemDiscountTotal - seniorDiscountTotalR, 0));
 
   const completeSale = async () => {
-    const sale = await createSale({ items: cart, subtotal, discount, tax, total, method });
-    setInvoiceId(sale.id);
-    setPayOpen(false);
-    setReceiptOpen(true);
+    try {
+      const received = method === "cash" ? Number(cashReceived) : total;
+      if (method === "cash" && (!Number.isFinite(received) || received < total)) {
+        setError("Cash received must cover the sale total.");
+        return;
+      }
+      const sale = await api.createSale({
+        items: cart.map((item) => ({
+          productId: item.id,
+          qty: item.qty,
+          discPct: discountPct,
+          unitPrice: item.price,
+        })),
+        customer: customerName,
+        customerType,
+        memberId,
+        paymentType: method,
+        cashReceived: method === "cash" ? received : undefined,
+        cashierSessionId: session ? session.id : undefined,
+      }, sessionToken);
+      setLastSale(sale);
+      setInvoiceId(sale.id);
+      setTransactionRef(sale.transactionId || `#${sale.id}`);
+      setPayOpen(false);
+      setReceiptOpen(true);
+    } catch (err) {
+      setPayOpen(false);
+      setError(err.message || "Unable to complete sale");
+    }
   };
-  const newSale = () => { setCart([]); setDiscountPct(0); setReceiptOpen(false); setMethod("cash"); };
+  const newSale = () => { setCart([]); setDiscountPct(0); setReceiptOpen(false); setMethod("cash"); setCashReceived(""); setCustomerId(""); setLastSale(null); setError(""); };
 
   return (
-    <div className="grid grid-cols-1 xl:grid-cols-[1fr_380px] gap-4 items-start">
-      <div className="space-y-4 min-w-0">
+    <div className="pos-workspace grid grid-cols-1 xl:grid-cols-[minmax(0,1.35fr)_minmax(360px,0.65fr)] gap-4 items-start">
+      <section className="pos-catalog space-y-4 min-w-0">
+        {error && <div className="rounded-xl px-4 py-3 text-sm" style={{ background: t.dangerSoft, color: t.danger }}>{error}</div>}
+        {session && (
+          <div className="rounded-xl px-4 py-3 flex flex-wrap items-center gap-x-6 gap-y-1 text-xs"
+            style={{ background: t.successSoft, border: `1px solid ${t.border}` }}>
+            <span style={{ color: t.sub }}>Register <strong style={{ color: t.text }}>{session.terminal}</strong></span>
+            <span style={{ color: t.sub }}>Session <strong style={{ color: t.text }}>{session.sessionRef}</strong></span>
+            <span style={{ color: t.sub }}>Cashier <strong style={{ color: t.text }}>{session.cashierUsername}</strong></span>
+            <span style={{ color: t.sub }}>Opening Float <strong style={{ color: t.text }}>{money(session.openingFloat)}</strong></span>
+            <span style={{ color: t.sub }}>Cash Sales <strong style={{ color: t.text }}>{money(session.summary ? session.summary.cashSales : 0)}</strong></span>
+            <span style={{ color: t.sub }}>Expected Cash <strong style={{ color: t.primary }}>{money(session.expectedCash)}</strong></span>
+          </div>
+        )}
+        {!session && (
+          <div className="rounded-xl px-4 py-3 text-xs font-medium" style={{ background: t.warningSoft, color: t.warning }}>
+            No cashier register is open on this terminal. Sales will not be counted against a cash drawer
+            until a cashier opens a register with an opening float.
+          </div>
+        )}
         <Card t={t} className="p-4">
+          <div className="flex items-center justify-between gap-3 mb-3">
+            <div>
+              <p className="text-[10px] uppercase tracking-[0.16em] font-bold" style={{ color: t.primary }}>Product catalog</p>
+              <h2 className="text-lg font-extrabold mt-0.5" style={{ color: t.text }}>Find products</h2>
+            </div>
+            <Badge t={t} tone="info">{filtered.length} available</Badge>
+          </div>
           <div className="flex flex-wrap gap-3">
-            <div className="relative flex-1 min-w-[200px]">
+            <div className="relative flex-1 min-w-[220px]">
               <ScanLine size={15} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: t.sub }} />
-              <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Scan barcode or search product…"
+              <input autoFocus value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Scan barcode or search product…"
                 className="w-full pl-9 pr-3 py-2.5 rounded-xl text-sm outline-none" style={{ background: t.bg, color: t.text, border: `1px solid ${t.border}` }} />
             </div>
             <select value={catFilter} onChange={(e) => setCatFilter(e.target.value)} className="px-3 py-2.5 rounded-xl text-sm outline-none" style={{ background: t.bg, color: t.text, border: `1px solid ${t.border}` }}>
@@ -88,9 +184,9 @@ export default function POSPage({ t }) {
             <div className="col-span-full text-center py-16" style={{ color: t.sub }}>No products match your search.</div>
           )}
         </div>
-      </div>
+      </section>
 
-      <Card t={t} className="p-0 sticky top-20 overflow-hidden">
+      <Card t={t} className="pos-order-panel p-0 sticky top-20 overflow-hidden flex flex-col min-h-[calc(100vh-8rem)]" style={{ background: "transparent", color: "inherit", border: "none", boxShadow: "none" }}>
         <div className="px-5 py-4 flex items-center justify-between" style={{ borderBottom: `1px dashed ${t.border}` }}>
           <div className="flex items-center gap-2">
             <ShoppingCart size={16} style={{ color: t.primary }} />
@@ -100,14 +196,18 @@ export default function POSPage({ t }) {
         </div>
 
         <div className="px-5 py-3">
-          <select className="w-full px-3 py-2 rounded-xl text-xs outline-none" style={{ background: t.bg, color: t.text, border: `1px solid ${t.border}` }}>
-            <option>Walk-in Customer</option>
-            <option>Josefina Dela Cruz</option>
-            <option>Roberto Aquino</option>
+          <label className="block text-[10px] font-bold uppercase tracking-wider mb-1" style={{ color: t.sub }}>Customer</label>
+          <select value={customerId} onChange={(event) => setCustomerId(event.target.value)} className="w-full px-3 py-2 rounded-xl text-xs outline-none" style={{ background: t.bg, color: t.text, border: `1px solid ${t.border}` }}>
+            <option value="">Walk-in Customer</option>
+            {customers.map((c) => (
+              <option key={c.id} value={String(c.id)}>
+                {c.name}{c.member_id ? ` (${String(c.customer_type || "Member").toUpperCase()}: ${c.member_id})` : ` (${String(c.customer_type || "Member").toUpperCase()})`}
+              </option>
+            ))}
           </select>
         </div>
 
-        <div className="px-5 max-h-[320px] overflow-y-auto space-y-3 pb-2">
+        <div className="px-5 pt-2 flex-1 min-h-[220px] max-h-[calc(100vh-25rem)] overflow-y-auto space-y-3 pb-2">
           {cart.length === 0 && <p className="text-xs text-center py-8" style={{ color: t.sub }}>Cart is empty — tap a product to add it.</p>}
           {cart.map((i) => (
             <div key={i.id} className="flex items-start gap-2">
@@ -135,17 +235,23 @@ export default function POSPage({ t }) {
           <div className="flex items-center justify-between">
             <span style={{ color: t.sub }}>Discount</span>
             <div className="flex items-center gap-1.5">
-              <input type="number" min={0} max={100} value={discountPct} onChange={(e) => setDiscountPct(Math.max(0, Math.min(100, Number(e.target.value))))}
+              <input type="number" min={0} max={90} value={discountPct} onChange={(e) => setDiscountPct(Math.max(0, Math.min(90, Math.round(Number(e.target.value)) || 0)))}
                 className="w-12 px-1.5 py-1 rounded-md text-xs text-right outline-none" style={{ background: t.bg, color: t.text, border: `1px solid ${t.border}` }} />
               <span style={{ color: t.sub }}>%</span>
             </div>
           </div>
-          <div className="flex items-center justify-between"><span style={{ color: t.sub }}>Tax (12%)</span><span className="font-semibold" style={{ color: t.text }}>{money(tax)}</span></div>
+          {seniorDiscountTotalR > 0 && (
+            <div className="flex items-center justify-between text-[#079455]">
+              <span style={{ color: "#079455" }}>{customerType === "senior" ? "Senior" : "PWD"} 20%</span>
+              <span className="font-semibold" style={{ color: "#079455" }}>-{money(seniorDiscountTotalR)}</span>
+            </div>
+          )}
+          <div className="flex items-center justify-between"><span style={{ color: t.sub }}>VAT (incl.)</span><span className="font-semibold" style={{ color: t.text }}>{money(vat)}</span></div>
         </div>
 
-        <div className="mx-5 my-3 rounded-xl px-4 py-3 flex items-center justify-between" style={{ background: t.primarySoft }}>
-          <span className="text-sm font-bold" style={{ color: t.primary }}>Grand Total</span>
-          <span className="text-xl font-extrabold" style={{ color: t.primary, fontFamily: "Manrope, sans-serif" }}>{money(total)}</span>
+        <div className="mx-5 my-3 rounded-xl px-4 py-3.5 flex items-center justify-between" style={{ background: t.primarySoft }}>
+          <div><span className="text-[10px] uppercase tracking-wider font-bold block" style={{ color: t.primary }}>Amount due</span><span className="text-sm font-bold" style={{ color: t.primary }}>Grand Total</span></div>
+          <span className="text-2xl font-extrabold" style={{ color: t.primary, fontFamily: "Manrope, sans-serif" }}>{money(total)}</span>
         </div>
 
         <div className="px-5 pb-5">
@@ -156,11 +262,20 @@ export default function POSPage({ t }) {
       </Card>
 
       {payOpen && (
-        <PaymentModal t={t} method={method} setMethod={setMethod} total={total} onClose={() => setPayOpen(false)} onConfirm={completeSale} />
+          <PaymentModal t={t} method={method} setMethod={setMethod} total={total} cashReceived={cashReceived} setCashReceived={setCashReceived} onClose={() => setPayOpen(false)} onConfirm={completeSale} />
       )}
 
       {receiptOpen && (
-        <ReceiptModal t={t} cart={cart} subtotal={subtotal} tax={tax} total={total} method={method} invoiceId={invoiceId} onNewSale={newSale} />
+        <ReceiptModal
+          t={t}
+          cart={cart}
+          subtotal={lastSale && lastSale.subtotal !== undefined ? lastSale.subtotal : subtotal}
+          tax={lastSale && lastSale.vat !== undefined ? lastSale.vat : vat}
+          total={lastSale && lastSale.grandTotal !== undefined ? lastSale.grandTotal : total}
+          method={method}
+          invoiceId={transactionRef || invoiceId}
+          onNewSale={newSale}
+        />
       )}
     </div>
   );

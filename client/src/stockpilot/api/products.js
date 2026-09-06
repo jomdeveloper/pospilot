@@ -8,7 +8,7 @@ export async function getProducts() {
     cat: product.category || "General",
     form: product.product_type || "General",
     unit: "unit",
-    min: 0,
+    min: Number(product.reorder_level ?? product.reorderLevel ?? 0),
     img: "📦",
   }));
 }

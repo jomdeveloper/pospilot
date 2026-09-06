@@ -15,6 +15,8 @@ export default function ReceivingPage({ t }) {
     new Date().toISOString().slice(0, 10),
   );
   const [expiryDates, setExpiryDates] = useState({});
+  const [receivingDetails, setReceivingDetails] = useState({});
+  const [receivedQuantities, setReceivedQuantities] = useState({});
 
   const load = () => {
     setLoading(true);
@@ -33,6 +35,8 @@ export default function ReceivingPage({ t }) {
     setReceivingOrder(order);
     setReceivedAt(new Date().toISOString().slice(0, 10));
     setExpiryDates({});
+    setReceivingDetails({});
+    setReceivedQuantities(Object.fromEntries(order.items.map((item) => [item.product_id, Math.max(0, item.qty - Number(item.received_qty || 0))])));
     setError("");
   };
 
@@ -43,7 +47,13 @@ export default function ReceivingPage({ t }) {
         receivedAt,
         items: receivingOrder.items.map((item) => ({
           productId: item.product_id,
+          quantity: Number(receivedQuantities[item.product_id] || 0),
+          batchNumber: receivingDetails[item.product_id]?.batchNumber || "",
           expiryDate: expiryDates[item.product_id] || "",
+          storageCondition: receivingDetails[item.product_id]?.storageCondition || "",
+          warrantyPeriod: receivingDetails[item.product_id]?.warrantyPeriod || "",
+          serialNumbers: (receivingDetails[item.product_id]?.serialNumbers || "").split(/[,\n]/).map((serial) => serial.trim()).filter(Boolean),
+          attributes: receivingDetails[item.product_id]?.attributes || {},
         })),
       });
       setReceivingOrder(null);
@@ -110,8 +120,8 @@ export default function ReceivingPage({ t }) {
                       <h3 className="font-bold" style={{ color: t.text }}>
                         {order.po_number}
                       </h3>
-                      <Badge t={t} tone="warning">
-                        Pending
+                      <Badge t={t} tone={order.status === "Partially Received" ? "info" : "warning"}>
+                        {order.status}
                       </Badge>
                     </div>
                     <p className="text-sm mt-1" style={{ color: t.sub }}>
@@ -134,8 +144,8 @@ export default function ReceivingPage({ t }) {
                       style={{ background: t.bg }}
                     >
                       <span style={{ color: t.text }}>{item.name}</span>
-                      <span className="font-semibold" style={{ color: t.sub }}>
-                        {item.qty} units
+                          <span className="font-semibold" style={{ color: t.sub }}>
+                        {item.qty - Number(item.received_qty || 0)} outstanding of {item.qty}
                       </span>
                     </div>
                   ))}
@@ -242,9 +252,15 @@ export default function ReceivingPage({ t }) {
                         >
                           {item.name}
                         </p>
-                        <p className="text-xs mt-1" style={{ color: t.sub }}>{item.qty} units · Expiration optional</p>
+                        <p className="text-xs mt-1" style={{ color: t.sub }}>{item.qty - Number(item.received_qty || 0)} outstanding · {item.track_batch ? "Batch required" : "No batch tracking"} · {item.track_expiry ? "Expiry required" : "No expiry tracking"}</p>
                       </div>
-                      <label className="w-44">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full lg:w-auto lg:min-w-[32rem]">
+                      <label><span className="text-[10px] uppercase font-bold block mb-1" style={{ color: t.sub }}>Receiving quantity</span><input type="number" min="0" max={item.qty - Number(item.received_qty || 0)} step="1" value={receivedQuantities[item.product_id] ?? 0} onChange={(event) => setReceivedQuantities((current) => ({ ...current, [item.product_id]: event.target.value }))} className="w-full px-2 py-2 rounded-lg text-xs outline-none" style={{ background: t.card, color: t.text, border: `1px solid ${t.border}` }} /></label>
+                      {item.track_batch && <label>
+                          <span className="text-[10px] uppercase font-bold block mb-1" style={{ color: t.sub }}>Batch / lot number (optional)</span>
+                          <input type="text" value={receivingDetails[item.product_id]?.batchNumber || ""} onChange={(event) => setReceivingDetails((current) => ({ ...current, [item.product_id]: { ...current[item.product_id], batchNumber: event.target.value } }))} className="w-full px-2 py-2 rounded-lg text-xs outline-none" style={{ background: t.card, color: t.text, border: `1px solid ${t.border}` }} />
+                        </label>}
+                      {item.track_expiry && <label>
                           <span
                             className="text-[10px] uppercase font-bold block mb-1"
                             style={{ color: t.sub }}
@@ -267,7 +283,11 @@ export default function ReceivingPage({ t }) {
                               border: `1px solid ${t.border}`,
                             }}
                           />
-                      </label>
+                          </label>}
+                          {item.productFields?.some((field) => field.name === "Storage condition") && <label><span className="text-[10px] uppercase font-bold block mb-1" style={{ color: t.sub }}>Storage condition</span><input type="text" placeholder="e.g. Store below 25°C" value={receivingDetails[item.product_id]?.storageCondition || ""} onChange={(event) => setReceivingDetails((current) => ({ ...current, [item.product_id]: { ...current[item.product_id], storageCondition: event.target.value } }))} className="w-full px-2 py-2 rounded-lg text-xs outline-none" style={{ background: t.card, color: t.text, border: `1px solid ${t.border}` }} /></label>}
+                          {item.productFields?.some((field) => field.name === "Warranty period") && <label><span className="text-[10px] uppercase font-bold block mb-1" style={{ color: t.sub }}>Warranty period</span><input type="number" min="0" step="0.01" value={receivingDetails[item.product_id]?.warrantyPeriod || ""} onChange={(event) => setReceivingDetails((current) => ({ ...current, [item.product_id]: { ...current[item.product_id], warrantyPeriod: event.target.value } }))} className="w-full px-2 py-2 rounded-lg text-xs outline-none" style={{ background: t.card, color: t.text, border: `1px solid ${t.border}` }} /></label>}
+                          {item.track_serial && <label className="sm:col-span-2"><span className="text-[10px] uppercase font-bold block mb-1" style={{ color: t.sub }}>Serial numbers (optional — leave blank to auto-generate {item.qty})</span><textarea rows="2" placeholder={"One per line or comma separated, e.g. " + (["SN-0001","SN-0002","SN-0003"].slice(0, Math.min(3, item.qty)).join(", ")) + (item.qty > 3 ? ", …" : "")} value={receivingDetails[item.product_id]?.serialNumbers || ""} onChange={(event) => setReceivingDetails((current) => ({ ...current, [item.product_id]: { ...current[item.product_id], serialNumbers: event.target.value } }))} className="w-full px-2 py-2 rounded-lg text-xs outline-none resize-none" style={{ background: t.card, color: t.text, border: `1px solid ${t.border}` }} /></label>}
+                          </div>
                     </div>
                   </div>
                 ))}

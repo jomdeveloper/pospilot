@@ -18,6 +18,7 @@ export async function validateLogin(username, password) {
       user: result.user.username,
       role: result.user.role,
       token: result.token,
+      mustChangePassword: Boolean(result.user && result.user.mustChangePassword),
       message: 'Login successful.',
     };
   } catch (error) {

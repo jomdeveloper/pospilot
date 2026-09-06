@@ -38,6 +38,24 @@ const CATEGORY_ICONS = {
   Services: Sparkles,
 };
 
+const SUBCATEGORY_FIELDS = [
+  { name: "Expiry date", dataType: "date" },
+  { name: "Storage condition", dataType: "text" },
+  { name: "Batch/lot number", dataType: "text" },
+  { name: "Prescription required", dataType: "boolean" },
+  { name: "FDA registration number", dataType: "text" },
+  { name: "Price per kilo", dataType: "number" },
+  { name: "Net weight", dataType: "number" },
+  { name: "Size", dataType: "text" },
+  { name: "Color", dataType: "text" },
+  { name: "Material", dataType: "text" },
+  { name: "Warranty period", dataType: "number" },
+  { name: "Serial number", dataType: "text" },
+  { name: "Duration", dataType: "number" },
+  { name: "Service fee", dataType: "number" },
+  { name: "Linked component products", dataType: "text" },
+];
+
 export default function CategoriesPage({ t, sessionToken, loggedInRole }) {
   const [categories, setCategories] = useState([]);
   const [query, setQuery] = useState("");
@@ -105,57 +123,69 @@ export default function CategoriesPage({ t, sessionToken, loggedInRole }) {
     setEditingCategory(category);
     setName(category.name);
     setDescription(category.description || "");
-    setProductTypes(category.productTypeDefinitions || (category.productTypes || []).map((type) => ({ name: type, attributes: [] })));
+    setProductTypes(category.productTypeDefinitions || (category.subcategories || category.productTypes || []).map((type) => ({ name: type, attributes: [] })));
     setStatus(category.status || "Active");
     setError("");
     setShowForm(true);
   };
 
-  const addProductType = () =>
+  const addProductType = (event) => {
+    event?.preventDefault();
+    event?.stopPropagation();
     setProductTypes((current) => [
       ...current,
       {
         name: "",
-        attributes: [{ name: "", dataType: "text", required: false }],
+        attributes: [],
       },
     ]);
-  const removeProductType = (typeIndex) =>
+  };
+  const removeProductType = (event, typeIndex) => {
+    event.preventDefault();
+    event.stopPropagation();
     setProductTypes((current) =>
       current.filter((_, index) => index !== typeIndex),
     );
+  };
   const updateProductType = (typeIndex, field, value) =>
     setProductTypes((current) =>
       current.map((type, index) =>
         index === typeIndex ? { ...type, [field]: value } : type,
       ),
     );
-  const addAttribute = (typeIndex) =>
+  const addAttribute = (event, typeIndex) => {
+    event?.preventDefault();
+    event?.stopPropagation();
     setProductTypes((current) =>
       current.map((type, index) =>
         index === typeIndex
           ? {
               ...type,
               attributes: [
-                ...type.attributes,
+                ...(type.attributes || []),
                 { name: "", dataType: "text", required: false },
               ],
             }
           : type,
       ),
     );
-  const removeAttribute = (typeIndex, attributeIndex) =>
+  };
+  const removeAttribute = (event, typeIndex, attributeIndex) => {
+    event.preventDefault();
+    event.stopPropagation();
     setProductTypes((current) =>
       current.map((type, index) =>
         index === typeIndex
           ? {
               ...type,
-              attributes: type.attributes.filter(
+              attributes: (type.attributes || []).filter(
                 (_, childIndex) => childIndex !== attributeIndex,
               ),
             }
           : type,
       ),
     );
+  };
   const updateAttribute = (typeIndex, attributeIndex, field, value) =>
     setProductTypes((current) =>
       current.map((type, index) =>
@@ -192,6 +222,7 @@ export default function CategoriesPage({ t, sessionToken, loggedInRole }) {
       const payload = {
         name: name.trim(),
         description: description.trim(),
+        subcategories: normalizedProductTypes,
         productTypes: normalizedProductTypes,
         status,
       };
@@ -231,7 +262,7 @@ export default function CategoriesPage({ t, sessionToken, loggedInRole }) {
     <>
       <div className="flex items-center justify-between mb-2">
         <span className="text-xs font-semibold" style={{ color: t.sub }}>
-          Product types & fields
+          Subcategories & fields
         </span>
         <button
           type="button"
@@ -239,7 +270,7 @@ export default function CategoriesPage({ t, sessionToken, loggedInRole }) {
           className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold"
           style={{ background: t.primarySoft, color: t.primary }}
         >
-          <Plus size={13} /> Add product type
+          <Plus size={13} /> Add subcategory
         </button>
       </div>
       <div className="space-y-3">
@@ -255,7 +286,7 @@ export default function CategoriesPage({ t, sessionToken, loggedInRole }) {
                 onChange={(event) =>
                   updateProductType(typeIndex, "name", event.target.value)
                 }
-                placeholder="Product type name"
+                placeholder="Subcategory name"
                 className="flex-1 px-3 py-2 rounded-lg text-sm outline-none"
                 style={{
                   background: t.card,
@@ -265,8 +296,8 @@ export default function CategoriesPage({ t, sessionToken, loggedInRole }) {
               />
               <button
                 type="button"
-                onClick={() => removeProductType(typeIndex)}
-                aria-label="Remove product type"
+                onClick={(event) => removeProductType(event, typeIndex)}
+                aria-label="Remove subcategory"
                 style={{ color: t.danger }}
               >
                 <Trash2 size={16} />
@@ -278,37 +309,34 @@ export default function CategoriesPage({ t, sessionToken, loggedInRole }) {
                   className="text-xs font-semibold"
                   style={{ color: t.sub }}
                 >
-                  Specific fields
+                  Product fields
                 </span>
                 <button
                   type="button"
-                  onClick={() => addAttribute(typeIndex)}
+                  onClick={(event) => addAttribute(event, typeIndex)}
                   className="text-xs font-semibold"
                   style={{ color: t.primary }}
                 >
                   + Add field
                 </button>
               </div>
-              {type.attributes.map((attribute, attributeIndex) => (
+              {(type.attributes || []).map((attribute, attributeIndex) => (
                 <div key={attributeIndex} className="flex items-center gap-2">
-                  <input
+                  <select
                     value={attribute.name}
-                    onChange={(event) =>
-                      updateAttribute(
-                        typeIndex,
-                        attributeIndex,
-                        "name",
-                        event.target.value,
-                      )
-                    }
-                    placeholder="Field name"
-                    className="flex-1 px-3 py-2 rounded-lg text-sm outline-none"
-                    style={{
-                      background: t.card,
-                      color: t.text,
-                      border: `1px solid ${t.border}`,
+                    onChange={(event) => {
+                      const selected = SUBCATEGORY_FIELDS.find((field) => field.name === event.target.value);
+                      updateAttribute(typeIndex, attributeIndex, "name", event.target.value);
+                      if (selected) updateAttribute(typeIndex, attributeIndex, "dataType", selected.dataType);
                     }}
-                  />
+                    className="flex-1 px-3 py-2 rounded-lg text-sm outline-none"
+                    style={{ background: t.card, color: t.text, border: `1px solid ${t.border}` }}
+                  >
+                    <option value="">Choose field</option>
+                    {SUBCATEGORY_FIELDS.filter((field) =>
+                      field.name === attribute.name || !(type.attributes || []).some((other) => other.name === field.name)
+                    ).map((field) => <option key={field.name} value={field.name}>{field.name}</option>)}
+                  </select>
                   <select
                     value={attribute.dataType}
                     onChange={(event) =>
@@ -326,6 +354,7 @@ export default function CategoriesPage({ t, sessionToken, loggedInRole }) {
                       border: `1px solid ${t.border}`,
                     }}
                   >
+                    <option value="date">Date</option>
                     <option value="text">Text</option>
                     <option value="number">Number</option>
                     <option value="boolean">Yes / No</option>
@@ -350,7 +379,7 @@ export default function CategoriesPage({ t, sessionToken, loggedInRole }) {
                   </label>
                   <button
                     type="button"
-                    onClick={() => removeAttribute(typeIndex, attributeIndex)}
+                    onClick={(event) => removeAttribute(event, typeIndex, attributeIndex)}
                     aria-label="Remove field"
                     style={{ color: t.sub }}
                   >
@@ -364,7 +393,7 @@ export default function CategoriesPage({ t, sessionToken, loggedInRole }) {
       </div>
       {productTypes.length === 0 && (
         <p className="text-xs mt-2" style={{ color: t.sub }}>
-          Add a product type and its specific fields.
+          Add a subcategory and its product fields.
         </p>
       )}
     </>

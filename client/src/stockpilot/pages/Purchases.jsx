@@ -7,6 +7,7 @@ import {
   Filter,
   Package2,
   Plus,
+  Printer,
   Search,
   Store,
   Trash2,
@@ -25,9 +26,6 @@ export default function PurchasesPage({ t }) {
   const [suppliers, setSuppliers] = useState([]);
   const [supplier, setSupplier] = useState("");
   const [lines, setLines] = useState([]);
-  const [productId, setProductId] = useState("");
-  const [qty, setQty] = useState("1");
-  const [unitCost, setUnitCost] = useState("");
   const [error, setError] = useState("");
   const [selectedPurchase, setSelectedPurchase] = useState(null);
   const [loadingPurchase, setLoadingPurchase] = useState(false);
@@ -51,9 +49,6 @@ export default function PurchasesPage({ t }) {
     load();
   }, []);
 
-  const selectedProduct = products.find(
-    (product) => String(product.id) === productId,
-  );
   const total = useMemo(
     () => lines.reduce((sum, line) => sum + line.qty * line.unitCost, 0),
     [lines],
@@ -66,26 +61,36 @@ export default function PurchasesPage({ t }) {
     [products],
   );
   const restockProducts = useMemo(
-    () =>
-      products
+    () => {
+      const matchesStockFilter = (status) => {
+        if (productStockFilter === "all") return true;
+        if (productStockFilter === "out-of-stock") return status === "out-of-stock";
+        if (productStockFilter === "reorder") return status === "reorder";
+        return status === "out-of-stock" || status === "reorder";
+      };
+
+      return products
         .map((product) => {
           const stock = Number(product.stock || 0);
           const min = Number(product.reorder_level ?? product.min ?? 0);
           const max = Number(product.maximum_stock ?? product.max ?? 0);
+          const hasPendingPurchase = purchases.some((purchase) => ["Pending", "Partially Received"].includes(purchase.status) && purchase.items?.some((item) => Number(item.product_id) === Number(product.id) && Number(item.received_qty || 0) < Number(item.qty || 0)));
           const status =
-            stock === 0 ? "out-of-stock" : stock <= min ? "reorder" : "healthy";
+            stock === 0 ? "out-of-stock" : max > 0 && stock > max ? "overstocked" : stock <= min ? "reorder" : "healthy";
           return {
             product,
             stock,
             min,
             max,
+            hasPendingPurchase,
             needed: Math.max(0, max - stock),
             status,
           };
         })
         .filter(
-          ({ product, status }) =>
-            (productStockFilter === "all" || status !== "healthy") &&
+          ({ product, status, hasPendingPurchase }) =>
+            !hasPendingPurchase &&
+            matchesStockFilter(status) &&
             (productCategory === "all" ||
               product.category === productCategory) &&
             `${product.name} ${product.brand || ""} ${product.barcode || ""}`
@@ -97,38 +102,10 @@ export default function PurchasesPage({ t }) {
             (left.status === "out-of-stock" ? 0 : 1) -
               (right.status === "out-of-stock" ? 0 : 1) ||
             left.stock - right.stock,
-        ),
-    [products, productCategory, productQuery, productStockFilter],
+        );
+    },
+    [products, purchases, productCategory, productQuery, productStockFilter],
   );
-
-  const addLine = () => {
-    if (!selectedProduct || Number(qty) < 1 || Number(unitCost) < 0) return;
-    if (lines.some((line) => line.productId === selectedProduct.id)) return;
-    setLines([
-      ...lines,
-      {
-        productId: selectedProduct.id,
-        name: selectedProduct.name,
-        qty: Number(qty),
-        unitCost: Number(unitCost),
-      },
-    ]);
-    setProductId("");
-    setQty("1");
-    setUnitCost("");
-  };
-
-  const chooseProduct = ({ product, stock, min, max, needed }) => {
-    const existingLine = lines.find((line) => line.productId === product.id);
-    if (existingLine) {
-      setProductPickerOpen(false);
-      return;
-    }
-    setProductId(String(product.id));
-    setQty(String(needed || 1));
-    setUnitCost(String(Number(product.cost_price ?? product.costPrice ?? 0)));
-    setProductPickerOpen(false);
-  };
 
   const toggleProductSelection = (productId) =>
     setSelectedProductIds((current) =>
@@ -193,7 +170,7 @@ export default function PurchasesPage({ t }) {
   };
 
   const cancelPurchase = async () => {
-    if (!selectedPurchase || selectedPurchase.status !== "Pending") return;
+    if (!selectedPurchase || !["Pending", "Partially Received"].includes(selectedPurchase.status)) return;
     try {
       const updated = await api.cancelPurchase(selectedPurchase.id);
       setSelectedPurchase(updated);
@@ -212,31 +189,19 @@ export default function PurchasesPage({ t }) {
   return (
     <div className="space-y-4">
       <Card t={t} className="p-5">
+        <datalist id="supplier-options">
+          {suppliers.map((item) => <option key={item.id} value={item.name} />)}
+        </datalist>
         <div className="flex items-center gap-2 mb-4">
           <ClipboardList size={18} style={{ color: t.primary }} />
           <h2 className="font-bold" style={{ color: t.text }}>
             Create Purchase Order
           </h2>
         </div>
-        <div className="grid grid-cols-1 gap-3">
-          <div className="block">
-            <button
-              type="button"
-              onClick={() => setProductPickerOpen(true)}
-              className="w-full px-3 py-2.5 rounded-xl text-sm text-left flex items-center justify-between gap-2"
-              style={{
-                background: t.bg,
-                color: selectedProduct ? t.text : t.sub,
-                border: `1px solid ${t.border}`,
-              }}
-            >
-              <span className="truncate">
-                {selectedProduct?.name || "Choose product to order"}
-              </span>
-              <Search size={15} />
-            </button>
-          </div>
-        </div>
+        <button type="button" onClick={() => setProductPickerOpen(true)} className="w-full px-3 py-2.5 rounded-xl text-sm text-left flex items-center justify-between gap-2" style={{ background: t.bg, color: t.sub, border: `1px solid ${t.border}` }}>
+          <span>Choose products to order</span>
+          <Search size={15} />
+        </button>
         {lines.length > 0 && (
           <div
             className="mt-4 border rounded-xl overflow-hidden"
@@ -258,7 +223,7 @@ export default function PurchasesPage({ t }) {
                       {line.name}
                     </td>
                     <td className="px-3 py-2 min-w-[180px]" style={{ color: t.sub }}>
-                      <select value={line.supplier} onChange={(event) => setLines((current) => current.map((item) => item.productId === line.productId ? { ...item, supplier: event.target.value } : item))} className="w-full px-2 py-1.5 rounded-lg text-xs outline-none" style={{ background: t.bg, color: t.text, border: `1px solid ${t.border}` }} aria-label={`Supplier for ${line.name}`}><option value="">Select supplier</option>{suppliers.map((item) => <option key={item.id} value={item.name}>{item.name}</option>)}</select>
+                      <input list="supplier-options" value={line.supplier || ""} onChange={(event) => setLines((current) => current.map((item) => item.productId === line.productId ? { ...item, supplier: event.target.value } : item))} placeholder="Choose or type supplier" className="w-full px-2 py-1.5 rounded-lg text-xs outline-none" style={{ background: t.bg, color: t.text, border: `1px solid ${t.border}` }} aria-label={`Supplier for ${line.name}`} />
                     </td>
                     <td className="px-3 py-2" style={{ color: t.sub }}>
                       <input type="number" min="1" value={line.qty} onChange={(event) => setLines((current) => current.map((item) => item.productId === line.productId ? { ...item, qty: Math.max(1, Number(event.target.value) || 1) } : item))} className="w-20 px-2 py-1.5 rounded-lg text-center text-xs outline-none" style={{ background: t.bg, color: t.text, border: `1px solid ${t.border}` }} aria-label={`Quantity for ${line.name}`} />
@@ -558,16 +523,14 @@ export default function PurchasesPage({ t }) {
                           tone={
                             status === "out-of-stock"
                               ? "danger"
-                              : status === "reorder"
-                                ? "warning"
-                                : "success"
+                              : "warning"
                           }
                         >
                           {status === "out-of-stock"
                             ? "Out of stock"
                             : status === "reorder"
                               ? "Reorder soon"
-                              : "Healthy"}
+                              : "Overstocked"}
                         </Badge>
                         <div className="w-36">
                           <StockBar t={t} pct={max ? (stock / max) * 100 : 0} />
@@ -589,7 +552,7 @@ export default function PurchasesPage({ t }) {
                             className="font-extrabold"
                             style={{ color: t.primary }}
                           >
-                            {needed || 1} units
+                            {needed} units
                           </p>
                         </div>
                       </div>
@@ -645,15 +608,16 @@ export default function PurchasesPage({ t }) {
           style={{ background: "rgba(15,23,42,0.58)" }}
           role="presentation"
         >
+          <style>{`@media print { body * { visibility: hidden !important; } .purchase-printable, .purchase-printable * { visibility: visible !important; } .purchase-printable { position: absolute; inset: 0; max-width: none !important; max-height: none !important; overflow: visible !important; padding: 24px; background: white !important; color: black !important; } .purchase-printable .purchase-no-print { display: none !important; } .purchase-printable table { width: 100%; border-collapse: collapse; } .purchase-printable th, .purchase-printable td { border: 1px solid #cbd5e1; padding: 8px; text-align: left; } }`}</style>
           <div
-            className="w-full max-w-5xl max-h-[calc(100vh-2rem)] overflow-hidden rounded-2xl shadow-2xl"
+            className="purchase-printable w-full max-w-5xl max-h-[calc(100vh-2rem)] overflow-hidden rounded-2xl shadow-2xl"
             style={{ background: t.card, border: `1px solid ${t.border}` }}
             role="dialog"
             aria-modal="true"
             aria-labelledby="purchase-detail-title"
           >
             <div
-              className="flex items-center justify-between px-5 py-4"
+              className="purchase-no-print flex items-center justify-between px-5 py-4"
               style={{ borderBottom: `1px solid ${t.border}` }}
             >
               <div>
@@ -835,7 +799,7 @@ export default function PurchasesPage({ t }) {
               </div>
             </div>
             <div
-              className="flex justify-end gap-2 px-5 py-4"
+              className="purchase-no-print flex justify-end gap-2 px-5 py-4"
               style={{ borderTop: `1px solid ${t.border}` }}
             >
               <Button
@@ -846,7 +810,15 @@ export default function PurchasesPage({ t }) {
               >
                 Close
               </Button>
-              {selectedPurchase.status === "Pending" && (
+              <Button
+                t={t}
+                type="button"
+                variant="primary"
+                onClick={() => window.print()}
+              >
+                <Printer size={14} /> Print PO
+              </Button>
+              {["Pending", "Partially Received"].includes(selectedPurchase.status) && (
                 <Button
                   t={t}
                   type="button"

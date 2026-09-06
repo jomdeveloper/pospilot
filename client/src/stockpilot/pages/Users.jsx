@@ -8,7 +8,7 @@ import { api } from "../../api";
 const EMPTY_FORM = { name: "", username: "", email: "", password: "", role: "Cashier" };
 const ROLES = ["Administrator", "Manager", "Pharmacist", "Cashier", "Inventory Clerk", "Auditor"];
 
-export default function UsersPage({ t, sessionToken, canCreateUsers }) {
+export default function UsersPage({ t, sessionToken, canManageUsers }) {
   const [users, setUsers] = useState([]);
   const [query, setQuery] = useState("");
   const [showForm, setShowForm] = useState(false);
@@ -117,7 +117,7 @@ export default function UsersPage({ t, sessionToken, canCreateUsers }) {
               style={{ background: t.bg, color: t.text, border: `1px solid ${t.border}` }}
             />
           </div>
-          {canCreateUsers && <Button t={t} onClick={() => setShowForm(true)}><Plus size={15} /> Add User</Button>}
+          {canManageUsers && <Button t={t} onClick={() => setShowForm(true)}><Plus size={15} /> Add User</Button>}
         </div>
       </Card>
 
@@ -147,7 +147,7 @@ export default function UsersPage({ t, sessionToken, canCreateUsers }) {
                   <td className="px-4 py-3"><Badge t={t} tone={user.status === "Active" ? "success" : "neutral"}>{user.status}</Badge></td>
                   <td className="px-4 py-3 whitespace-nowrap" style={{ color: t.sub }}>{user.lastLogin}</td>
                   <td className="px-4 py-3 text-right">
-                    {user.role === "Administrator" ? (
+                    {!canManageUsers ? null : user.role === "Administrator" ? (
                       <span className="text-xs font-semibold" style={{ color: t.sub }} title="Administrator accounts cannot be deactivated">
                         Protected
                       </span>

@@ -17,11 +17,17 @@
     "rebuild:node": "npm rebuild better-sqlite3 --workspace server",
     "dev:server": "npm run dev --workspace server",
     "dev:client": "npm run dev --workspace client",
-    "dev:electron": "concurrently -k -n client,electron -c green,magenta \"npm run dev:client\" \"wait-on http://127.0.0.1:5173 && npm run start --workspace electron\"",
+    "dev:electron": "node scripts/setup-https.js",
+    "dev:electron:run": "concurrently -k -n client,electron -c green,magenta \"npm run dev:client\" \"wait-on https-get://127.0.0.1:5173 && npm run start --workspace electron\"",
     "dev": "concurrently -k -n server,client -c blue,green \"npm run dev:server\" \"npm run dev:client\"",
+    "dev:phone": "powershell -ExecutionPolicy Bypass -File scripts/start-phone.ps1",
     "dev:desktop": "concurrently -k -n client,electron -c green,magenta \"npm run dev:client\" \"wait-on http://127.0.0.1:5173 && npm run start --workspace electron\"",
     "build:client": "npm run build --workspace client",
-    "build:app": "npm run build:client && npx electron-builder --win"
+    "build:app": "npm run build:client && npx electron-builder --win",
+    "test": "npm run test --workspace server",
+    "restore:backup": "npm run restore:backup --workspace server",
+    "backup:list": "npm run backup:list --workspace server",
+    "lint": "oxlint"
   },
   "dependencies": {
     "better-sqlite3": "^11.3.0",
@@ -29,7 +35,8 @@
     "express": "^4.19.2",
     "lucide-react": "^1.27.0",
     "react": "^19.2.7",
-    "react-dom": "^19.2.7"
+    "react-dom": "^19.2.7",
+    "serialport": "^13.0.0"
   },
   "devDependencies": {
     "@electron/rebuild": "^3.6.1",
@@ -38,10 +45,13 @@
     "@vitejs/plugin-react": "^6.0.3",
     "concurrently": "^8.2.2",
     "electron": "^32.0.0",
+    "electron-builder": "^26.0.0",
     "oxlint": "^1.71.0",
     "vite": "^8.1.1",
-    "wait-on": "^7.2.0",
-    "electron-builder": "^26.0.0"
+    "wait-on": "^7.2.0"
+  },
+  "overrides": {
+    "qs": "^6.15.4"
   },
   "build": {
     "appId": "com.pospilot.app",

@@ -1,8 +1,8 @@
 import React from "react";
-import { Search, Bell, Moon, Sun, ChevronDown, LogOut } from "lucide-react";
+import { Search, Bell, Moon, Sun, ChevronDown, LogOut, Menu } from "lucide-react";
 import { PAGE_TITLES } from "../data/navigation";
 
-export default function Topbar({ page, dark, setDark, t, username, role, onLogout }) {
+export default function Topbar({ page, dark, setDark, t, username, role, onLogout, onMenuClick }) {
   const [profileOpen, setProfileOpen] = React.useState(false);
   const displayName = username || "Admin";
   const initials = displayName.slice(0, 2).toUpperCase();
@@ -12,6 +12,15 @@ export default function Topbar({ page, dark, setDark, t, username, role, onLogou
       className="sticky top-0 z-20 flex items-center gap-4 h-16 px-4 md:px-7 shrink-0"
       style={{ background: t.card, borderBottom: `1px solid ${t.border}` }}
     >
+      <button
+        type="button"
+        aria-label="Open navigation"
+        onClick={onMenuClick}
+        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl md:hidden"
+        style={{ background: t.bg, color: t.sub }}
+      >
+        <Menu size={18} />
+      </button>
       <div className="min-w-0 hidden sm:block">
         <p className="text-[11px] font-medium" style={{ color: t.sub }}>
           StockPilot / <span style={{ color: t.text }}>{PAGE_TITLES[page]}</span>

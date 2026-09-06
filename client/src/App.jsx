@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+﻿import { useState, useEffect, useRef, useCallback } from 'react';
 import {
   ScanBarcode,
   Search,
@@ -6,30 +6,30 @@ import {
   Tag,
   Plus,
   User,
-  Clock,
   Printer,
   Eye,
   EyeOff,
-  LogOut,
-  ChevronDown,
   Percent,
   Pause,
   RotateCcw,
   X,
-  CircleCheck,
   RefreshCw,
   Banknote,
   Trash2,
   Package,
   CalendarClock,
   Barcode,
+  Check,
+  Zap,
+  Power,
 } from 'lucide-react';
 import './App.css';
-import logo from './logo.png';
-import { api } from './api';
-import ProductSearchModal from './components/ProductSearchModal';
+import { api, setAuthToken } from './api';
 import { validateLogin } from './auth';
 import StockPilotApp from './stockpilot/App';
+import BarcodeScannerPage from './stockpilot/pages/BarcodeScanner';
+import { DEFAULT_STORE_SETTINGS, getStoreLogo, readStoreSettings, useStoreSettings } from './stockpilot/settings';
+import CashierPOS from './cashierpos/App';
 
 const functionKeys = [
   { key: 'F1', label: 'PRICE CHECK', icon: Tag, tone: 'default', action: 'priceCheck' },
@@ -54,27 +54,95 @@ const customerTypes = [
   { id: 'care_of_dr_paquit', label: 'Care of Dr. Paquit' },
 ];
 
+const SESSION_STORAGE_KEY = 'pospilot.session';
+
 function peso(value) {
   return value.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
+/** Round to 2 decimal places to avoid floating-point drift on money. */
+function money(value) {
+  return Math.round((Number(value) + Number.EPSILON) * 100) / 100;
+}
+
+/**
+ * Floating "close" button shown on the login screen only in the packaged
+ * Electron app (the frameless window has no OS title bar to close it).
+ * Opens the quit confirmation dialog instead of quitting immediately.
+ */
+function LoginCloseButton({ onClick }) {
+  return (
+    <button
+      type="button"
+      className="login-close-btn"
+      onClick={onClick}
+      aria-label="Close PosPilot"
+      title="Close PosPilot"
+    >
+      <X size={17} strokeWidth={2.4} />
+    </button>
+  );
+}
+
+/**
+ * Premium confirmation dialog shown before quitting. Cancel keeps the app
+ * running; "Yes, Exit" calls window.desktop.quit() so the Electron main
+ * process releases the server port and closes the database before exiting.
+ */
+function QuitConfirmDialog({ open, onCancel, onConfirm }) {
+  if (!open) return null;
+  return (
+    <div className="quit-confirm-overlay">
+      <div className="quit-confirm-modal" role="dialog" aria-modal="true" aria-label="Exit PosPilot">
+        <div className="quit-confirm-modal__icon" aria-hidden="true">
+          <Power size={24} strokeWidth={2.2} />
+        </div>
+        <h3 className="quit-confirm-modal__title">Exit PosPilot?</h3>
+        <p className="quit-confirm-modal__desc">
+          The application and its local server will shut down cleanly, releasing
+          the port it uses.
+        </p>
+        <div className="quit-confirm-modal__actions">
+          <button type="button" className="btn btn--outline-blue" onClick={onCancel} autoFocus>
+            Cancel
+          </button>
+          <button type="button" className="btn btn--danger" onClick={onConfirm}>
+            Yes, Exit
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
+  const storeSettings = useStoreSettings();
+  const storeName = storeSettings.storeName || DEFAULT_STORE_SETTINGS.storeName;
+  const pharmacySuffix = /\s+Pharmacy$/i.test(storeName) ? "Pharmacy" : "";
+  const storeNamePrefix = pharmacySuffix ? storeName.slice(0, -pharmacySuffix.length).trimEnd() : storeName;
+  const storeLogo = getStoreLogo(storeSettings);
   const posRef = useRef(null);
+
+  // Keep the browser/app tab title brand-consistent with the stored store name.
+  useEffect(() => {
+    document.title = storeName ? storeName + " — POS" : "Pharmacy POS";
+  }, [storeName]);
   const [items, setItems] = useState([]);
   const [selectedItemId, setSelectedItemId] = useState(null);
   const [heldSale, setHeldSale] = useState(null);
-  const [lastReceiptId] = useState(null);
+  const [lastReceiptId, setLastReceiptId] = useState(null);
   const [cashReceived, setCashReceived] = useState('0.00');
   const [payment, setPayment] = useState('cash');
   const [searchTerm, setSearchTerm] = useState('');
-  const [online, setOnline] = useState(false);
+  const barcodeBeepContextRef = useRef(null);
   const [statusMessage, setStatusMessage] = useState('Connecting to server…');
+  const [scannerPairingKey, setScannerPairingKey] = useState('');
+  const [scannerConnected, setScannerConnected] = useState(false);
   const searchInputRef = useRef(null);
   const [statusOpen, setStatusOpen] = useState(false);
   const statusMenuRef = useRef(null);
   const [userOpen, setUserOpen] = useState(false);
   const userMenuRef = useRef(null);
-  const [currentTime, setCurrentTime] = useState(new Date());
   const selectedRowRef = useRef(null);
   const itemTableRef = useRef(null);
   const priceCheckInputRef = useRef(null);
@@ -86,6 +154,7 @@ export default function App() {
   const [priceCheckInput, setPriceCheckInput] = useState('');
   const [priceCheckError, setPriceCheckError] = useState('');
   const [loggedIn, setLoggedIn] = useState(false);
+  const [authInitializing, setAuthInitializing] = useState(true);
   const [isTransitioning, setIsTransitioning] = useState(false);
   const [loggedInUser, setLoggedInUser] = useState('');
   const [loggedInRole, setLoggedInRole] = useState('');
@@ -94,24 +163,162 @@ export default function App() {
   const [loginError, setLoginError] = useState('');
   const [loginSubmitting, setLoginSubmitting] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const [mustChangePassword, setMustChangePassword] = useState(false);
+  const [passwordChangeForm, setPasswordChangeForm] = useState({ currentPassword: '', newPassword: '', confirmPassword: '' });
+  const [passwordChangeError, setPasswordChangeError] = useState('');
+  const [passwordChangeSubmitting, setPasswordChangeSubmitting] = useState(false);
   const [searchProductOpen, setSearchProductOpen] = useState(false);
   const [qtyModalOpen, setQtyModalOpen] = useState(false);
   const [qtyTargetItemId, setQtyTargetItemId] = useState(null);
   const [qtyInputValue, setQtyInputValue] = useState('');
   const [qtyError, setQtyError] = useState('');
+  const [duplicateScan, setDuplicateScan] = useState(null);
+  const consecutiveScanRef = useRef({ productId: null, count: 0 });
+  const discardRemoteScansBeforeRef = useRef(0);
   const [removeConfirmOpen, setRemoveConfirmOpen] = useState(false);
   const [removeTargetItemId, setRemoveTargetItemId] = useState(null);
   const [customerType, setCustomerType] = useState('walkin');
   const [customerIdentity, setCustomerIdentity] = useState({ id: '', name: '' });
   const [customerInfoModalOpen, setCustomerInfoModalOpen] = useState(false);
+  const [memberSearchOpen, setMemberSearchOpen] = useState(false);
+  const [memberSearchTerm, setMemberSearchTerm] = useState('');
+  const [memberSearchResults, setMemberSearchResults] = useState([]);
+  const [memberSearchLoading, setMemberSearchLoading] = useState(false);
+  const [memberSearchError, setMemberSearchError] = useState('');
+  const [discountType, setDiscountType] = useState('');
+  const [discountModalOpen, setDiscountModalOpen] = useState(false);
+  const [quitConfirmOpen, setQuitConfirmOpen] = useState(false);
+  // Only the packaged Electron app exposes a desktop bridge — in the regular
+  // browser the login screen simply doesn't show a close button.
+  const canQuitApp = typeof window.desktop?.quit === 'function';
+  const [discountDraft, setDiscountDraft] = useState('');
   const [heldOrderCount, setHeldOrderCount] = useState(0);
   const [customerTypeOpen, setCustomerTypeOpen] = useState(false);
   const [customerTypeHighlight, setCustomerTypeHighlight] = useState(0);
   const customerTypeMenuRef = useRef(null);
 
+  useEffect(() => {
+    const storedSession = window.sessionStorage.getItem(SESSION_STORAGE_KEY);
+    if (!storedSession) {
+      setAuthInitializing(false);
+      return undefined;
+    }
+
+    let session;
+    try {
+      session = JSON.parse(storedSession);
+    } catch (_error) {
+      window.sessionStorage.removeItem(SESSION_STORAGE_KEY);
+      setAuthInitializing(false);
+      return undefined;
+    }
+
+    if (!session?.token) {
+      window.sessionStorage.removeItem(SESSION_STORAGE_KEY);
+      setAuthInitializing(false);
+      return undefined;
+    }
+
+    setAuthToken(session.token);
+    api.getSession(session.token).then((result) => {
+      setLoggedIn(true);
+      setLoggedInUser(result.user.username);
+      setLoggedInRole(result.user.role);
+      setSessionToken(session.token);
+      setMustChangePassword(Boolean(result.user && result.user.mustChangePassword));
+    }).catch(() => {
+      setAuthToken('');
+      window.sessionStorage.removeItem(SESSION_STORAGE_KEY);
+    }).finally(() => setAuthInitializing(false));
+
+    return undefined;
+  }, []);
+
+  useEffect(() => {
+    if (!loggedIn || String(loggedInRole || '').toLowerCase() === 'cashier' || !sessionToken || mustChangePassword) {
+      setScannerPairingKey('');
+      setScannerConnected(false);
+      return undefined;
+    }
+    let active = true;
+    api.createBarcodePairing(sessionToken).then((result) => {
+      if (!active) return;
+      setScannerPairingKey(result.key);
+      setScannerConnected(false);
+    }).catch(() => {
+      if (active) setStatusMessage('Unable to create scanner connection key');
+    });
+    return () => { active = false; };
+  }, [loggedIn, loggedInRole, sessionToken, mustChangePassword]);
+
+  useEffect(() => {
+    if (!loggedIn || String(loggedInRole || '').toLowerCase() === 'cashier' || !sessionToken || mustChangePassword) return undefined;
+    let active = true;
+    const refreshScannerStatus = () => {
+      api.getBarcodePairingStatus(sessionToken).then((result) => {
+        if (active) setScannerConnected(result.connected);
+      }).catch(() => {
+        if (active) setScannerConnected(false);
+      });
+    };
+    refreshScannerStatus();
+    const timer = window.setInterval(refreshScannerStatus, 1000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [loggedIn, loggedInRole, sessionToken, mustChangePassword]);
+
   const [payModalOpen, setPayModalOpen] = useState(false);
   const [payAmount, setPayAmount] = useState('');
   const closePayModal = () => setPayModalOpen(false);
+
+  // Simple modal-backed prompt used by PRICE OVERRIDE and DISCOUNT (window.prompt is not available in Electron).
+  const [promptModal, setPromptModal] = useState(null); // { type: 'price' | 'discount', itemId }
+  const promptInputRef = useRef(null);
+  const closePromptModal = useCallback(() => setPromptModal(null), []);
+  const popupOpenRef = useRef(false);
+  popupOpenRef.current = Boolean(
+    duplicateScan ||
+    removeConfirmOpen ||
+    qtyModalOpen ||
+    promptModal ||
+    payModalOpen ||
+    customerInfoModalOpen ||
+    priceCheckOpen ||
+    searchProductOpen ||
+    memberSearchOpen ||
+    discountModalOpen ||
+    customerTypeOpen
+  );
+  const isCashierPopupOpen = popupOpenRef.current;
+
+  useEffect(() => {
+    if (isCashierPopupOpen) setSearchTerm('');
+  }, [isCashierPopupOpen]);
+
+  // Derived line items and totals, kept above the keyboard handler so the
+  // checkout flow and keydown effect read authoritative values (no stale closures).
+  const rows = items.map((it) => {
+    const lineSubtotal = it.qty * it.price;
+    const discount = (lineSubtotal * it.discPct) / 100;
+    const total = lineSubtotal - discount;
+    return { ...it, lineSubtotal, discount, total };
+  });
+  const subtotal = rows.reduce((sum, r) => sum + r.lineSubtotal, 0);
+  const itemDiscountTotal = rows.reduce((sum, r) => sum + r.discount, 0);
+  // Senior/PWD 20% applies only to items flagged eligible for that discount, and
+  // is computed on the already-discounted line amount — never the pre-discount subtotal.
+  const seniorPwdEligible = (row) =>
+    customerType === 'senior'
+      ? Boolean(row.seniorEligible ?? row.senior_discount_eligible)
+      : Boolean(row.pwdEligible ?? row.pwd_discount_eligible);
+  const customerDiscountTotal = ['senior', 'pwd'].includes(customerType)
+    ? rows.filter(seniorPwdEligible).reduce((sum, r) => sum + (r.lineSubtotal - r.discount) * (100 / 112) * 0.2, 0)
+    : 0;
+  const discountTotal = money(itemDiscountTotal + customerDiscountTotal);
+  const taxableAmount = Math.max(subtotal - discountTotal, 0);
+  const grandTotal = taxableAmount;
 
   const closeSearchProduct = () => {
     setSearchProductOpen(false);
@@ -142,17 +349,23 @@ export default function App() {
     setRemoveTargetItemId(null);
   };
 
+  const openQuitConfirm = () => setQuitConfirmOpen(true);
+
+  const closeQuitConfirm = () => setQuitConfirmOpen(false);
+
+  const confirmQuitApp = () => {
+    // In Electron this hits the 'app-quit' IPC channel in the main process,
+    // which shuts down the Express server (releasing port 4000), closes the
+    // SQLite database and only then exits. Nothing happens in plain browsers.
+    window.desktop?.quit();
+  };
+
   const openPriceCheck = () => {
     setPriceCheckOpen(true);
     setPriceCheckProduct(null);
     setPriceCheckInput('');
     setPriceCheckError('');
   };
-
-  useEffect(() => {
-    const timer = setInterval(() => setCurrentTime(new Date()), 1000);
-    return () => clearInterval(timer);
-  }, []);
 
   useEffect(() => {
     if (priceCheckOpen || searchProductOpen) return;
@@ -212,6 +425,12 @@ export default function App() {
   }, [customerInfoModalOpen]);
 
   useEffect(() => {
+    if (!memberSearchOpen) return;
+    const timer = requestAnimationFrame(() => document.querySelector('.member-search-modal__input')?.focus());
+    return () => cancelAnimationFrame(timer);
+  }, [memberSearchOpen]);
+
+  useEffect(() => {
     if (!selectedRowRef.current || !itemTableRef.current) return;
 
     const row = selectedRowRef.current;
@@ -228,27 +447,6 @@ export default function App() {
       table.scrollTop -= tableRect.top + headerHeight - rowRect.top;
     }
   }, [selectedItemId, items.length]);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    api
-      .getProducts()
-      .then(() => {
-        if (cancelled) return;
-        setOnline(true);
-        setStatusMessage('');
-      })
-      .catch(() => {
-        if (cancelled) return;
-        setOnline(false);
-        setStatusMessage('Server offline — run "npm run dev" in /server');
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   // UPDATED: click-outside handler now also closes the customer-type dropdown
   useEffect(() => {
@@ -305,38 +503,61 @@ export default function App() {
     closeQtyModal();
   };
 
-  const handlePriceOverride = () => {
+  const openPriceModal = (type) => {
     const selected = getSelectedItem();
     if (!selected) {
-      setStatusMessage('Select an item before overriding price');
+      setStatusMessage(type === 'price' ? 'Select an item before overriding price' : 'Select an item before applying discount');
       return;
     }
-    const value = window.prompt('Enter new price', selected.price.toFixed(2));
-    if (value === null) return;
-    const price = parseFloat(value);
-    if (Number.isNaN(price) || price <= 0) {
-      setStatusMessage('Invalid price');
-      return;
-    }
-    setItems((prev) => prev.map((it) => (it.id === selected.id ? { ...it, price } : it)));
-    setStatusMessage('Price overridden');
+    setPromptModal({ type, itemId: selected.id });
   };
 
-  const handleDiscount = () => {
-    const selected = getSelectedItem();
-    if (!selected) {
-      setStatusMessage('Select an item before applying discount');
-      return;
+  const handlePriceOverride = () => openPriceModal('price');
+
+  const openDiscountModal = () => {
+    setDiscountDraft(discountType);
+    setDiscountModalOpen(true);
+  };
+
+  const closeDiscountModal = () => {
+    setDiscountModalOpen(false);
+  };
+
+  const handleDiscount = () => openDiscountModal();
+
+  const submitPricePrompt = useCallback(() => {
+    if (!promptModal) return;
+    const input = promptInputRef.current?.value ?? '';
+    const value = promptModal.type === 'price' ? parseFloat(input) : Number(input);
+
+    if (promptModal.type === 'price') {
+      if (Number.isNaN(value) || value <= 0) {
+        setStatusMessage('Invalid price');
+        return;
+      }
+      setItems((prev) => prev.map((it) => (it.id === promptModal.itemId ? { ...it, price: money(value) } : it)));
+      setStatusMessage('Price overridden');
+    } else {
+      if (Number.isNaN(value) || value < 0 || value > 100) {
+        setStatusMessage('Invalid discount percentage');
+        return;
+      }
+      setItems((prev) => prev.map((it) => (it.id === promptModal.itemId ? { ...it, discPct: value } : it)));
+      setStatusMessage('Discount updated');
     }
-    const value = window.prompt('Enter discount percentage', String(selected.discPct));
-    if (value === null) return;
-    const discPct = Number(value);
-    if (Number.isNaN(discPct) || discPct < 0 || discPct > 100) {
-      setStatusMessage('Invalid discount percentage');
-      return;
-    }
-    setItems((prev) => prev.map((it) => (it.id === selected.id ? { ...it, discPct } : it)));
-    setStatusMessage('Discount updated');
+    closePromptModal();
+  }, [promptModal, closePromptModal]);
+
+  const handleNewTransaction = () => {
+    setItems([]);
+    consecutiveScanRef.current = { productId: null, count: 0 };
+    setSelectedItemId(null);
+    setPayment('cash');
+    setCustomerType('walkin');
+    setCustomerIdentity({ id: '', name: '' });
+    setDiscountType('');
+    setCashReceived('0.00');
+    setStatusMessage('New transaction started');
   };
 
   const handleHold = () => {
@@ -347,6 +568,7 @@ export default function App() {
     setHeldSale({ items, payment, cashReceived });
     setHeldOrderCount((count) => count + 1);
     setItems([]);
+    consecutiveScanRef.current = { productId: null, count: 0 };
     setSelectedItemId(null);
     setCashReceived('0.00');
     setStatusMessage('Sale held');
@@ -395,6 +617,9 @@ export default function App() {
     }
 
     removeItem(selected.id);
+    if (consecutiveScanRef.current.productId === selected.id) {
+      consecutiveScanRef.current = { productId: null, count: 0 };
+    }
     setSelectedItemId(null);
     setStatusMessage(`Removed ${selected.name}`);
     closeRemoveConfirm();
@@ -441,17 +666,69 @@ export default function App() {
     if (nextType === 'walkin') {
       setCustomerType('walkin');
       setCustomerIdentity({ id: '', name: '' });
+      setDiscountType('');
       setCustomerInfoModalOpen(false);
       setStatusMessage('Walk-in customer selected');
       return;
     }
 
     setCustomerType(nextType);
+    if (['member', 'senior', 'pwd'].includes(nextType)) {
+      setDiscountType(nextType);
+    }
     if (['senior', 'pwd'].includes(nextType)) {
       setCustomerInfoModalOpen(true);
     } else {
       setCustomerInfoModalOpen(false);
     }
+  };
+
+  const closeMemberSearch = () => {
+    setMemberSearchOpen(false);
+    setMemberSearchTerm('');
+    setMemberSearchResults([]);
+    setMemberSearchError('');
+  };
+
+  const openMemberSearch = () => {
+    setMemberSearchOpen(true);
+    setMemberSearchTerm('');
+    setMemberSearchResults([]);
+    setMemberSearchError('');
+  };
+
+  const searchMembers = async () => {
+    const memberId = memberSearchTerm.trim();
+    if (!memberId) {
+      setMemberSearchError('Enter a member ID to search.');
+      setMemberSearchResults([]);
+      return;
+    }
+
+    setMemberSearchLoading(true);
+    setMemberSearchError('');
+    try {
+      const customers = await api.getCustomers(memberId);
+      const members = customers.filter((customer) =>
+        String(customer.customer_type || '').toLowerCase() === 'member'
+        && String(customer.member_id || '').toLowerCase().includes(memberId.toLowerCase())
+      );
+      setMemberSearchResults(members);
+      if (members.length === 0) setMemberSearchError('No member found with that ID.');
+    } catch (error) {
+      setMemberSearchResults([]);
+      setMemberSearchError(error.message || 'Unable to search members.');
+    } finally {
+      setMemberSearchLoading(false);
+    }
+  };
+
+  const selectMember = (member) => {
+    setCustomerType('member');
+    setDiscountType('member');
+    setCustomerIdentity({ id: member.member_id || '', name: member.name || '' });
+    closeMemberSearch();
+    setStatusMessage(`${member.name} selected`);
   };
 
   const saveCustomerIdentity = () => {
@@ -467,10 +744,62 @@ export default function App() {
     setStatusMessage(`${getCustomerLabel(customerType)} customer details saved`);
   };
 
-  const getCustomerLabel = (type) => {
+  const getCustomerLabel = useCallback((type) => {
     const match = customerTypes.find((option) => option.id === type);
     return match ? match.label : 'Walk-in';
-  };
+  }, []);
+
+  const completeSale = useCallback(async (received) => {
+    try {
+      const payload = {
+        items: items.map((it) => ({
+          productId: it.id,
+          qty: it.qty,
+          discPct: it.discPct || 0,
+          unitPrice: it.price,
+        })),
+        customer: (customerIdentity.name || '').trim() || getCustomerLabel(customerType),
+        customerType,
+        memberId: customerType === 'member' ? (customerIdentity.id || '').trim() || null : null,
+        cashReceived: received,
+        paymentType: payment,
+      };
+      const sale = await api.createSale(payload, sessionToken || null);
+      setLastReceiptId(sale.id);
+      setPayModalOpen(false);
+      setItems([]);
+      consecutiveScanRef.current = { productId: null, count: 0 };
+      setSelectedItemId(null);
+      setPayment('cash');
+      setCustomerType('walkin');
+      setCustomerIdentity({ id: '', name: '' });
+      setDiscountType('');
+      setCashReceived('0.00');
+      setStatusMessage(`Sale #${sale.id} complete — received ${peso(received)}, change ${peso(sale.changeDue)}`);
+    } catch (error) {
+      setPayModalOpen(false);
+      setStatusMessage(error.message || 'Unable to complete sale');
+    }
+  }, [items, customerIdentity, customerType, sessionToken, payment, getCustomerLabel]);
+
+  const confirmPay = useCallback(() => {
+    const parsed = parseFloat(payAmount);
+    if (isNaN(parsed)) {
+      setStatusMessage('Invalid amount');
+      return;
+    }
+    if (parsed < grandTotal) {
+      setStatusMessage(`Amount received is less than the total of ${peso(grandTotal)}`);
+      return;
+    }
+    if (items.length === 0) {
+      setStatusMessage('Cart is empty');
+      setPayModalOpen(false);
+      return;
+    }
+    setCashReceived(String(parsed.toFixed(2)));
+    completeSale(parsed);
+  }, [payAmount, items, grandTotal, completeSale]);
 
   const handlePrintLastReceipt = () => {
     if (!lastReceiptId) {
@@ -520,10 +849,14 @@ export default function App() {
         handlePrintLastReceipt();
         break;
       case 'pay':
-        setStatusMessage('Payment function disabled');
+        if (items.length === 0) {
+          setStatusMessage('Cart is empty');
+        } else {
+          setPayModalOpen(true);
+        }
         break;
       case 'complete':
-        setStatusMessage('Sale completion disabled');
+        confirmPay();
         break;
       case 'cancel':
         handleCancel();
@@ -541,6 +874,7 @@ export default function App() {
     if (barcodeOnly) {
       try {
         const med = await api.getProductByBarcode(trimmedTerm);
+        if (med) playBarcodeSuccessBeep();
         return med || null;
       } catch {
         return null;
@@ -550,8 +884,67 @@ export default function App() {
     const results = await api.getProducts(trimmedTerm);
     const items = Array.isArray(results) ? results : results.items;
     if (items.length === 0) return null;
+    playBarcodeSuccessBeep();
     return items[0];
   };
+
+  const playBarcodeSuccessBeep = () => {
+    try {
+      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+      if (!AudioContextClass) return;
+      const audioContext = barcodeBeepContextRef.current || new AudioContextClass();
+      barcodeBeepContextRef.current = audioContext;
+      const beepOscillator = audioContext.createOscillator();
+      const beepGain = audioContext.createGain();
+      beepOscillator.type = 'sine';
+      beepOscillator.frequency.setValueAtTime(880, audioContext.currentTime);
+      beepGain.gain.setValueAtTime(0.0001, audioContext.currentTime);
+      beepGain.gain.exponentialRampToValueAtTime(0.12, audioContext.currentTime + 0.01);
+      beepGain.gain.exponentialRampToValueAtTime(0.0001, audioContext.currentTime + 0.12);
+      beepOscillator.connect(beepGain);
+      beepGain.connect(audioContext.destination);
+      beepOscillator.start();
+      beepOscillator.stop(audioContext.currentTime + 0.13);
+    } catch (_error) {
+      // Audio is optional and may be unavailable in some browser environments.
+    }
+  };
+
+  const clearBarcodeInput = () => {
+    setSearchTerm('');
+    searchInputRef.current?.focus();
+  };
+
+  const closeDuplicateScan = useCallback(() => {
+    setDuplicateScan(null);
+    discardRemoteScansBeforeRef.current = Date.now();
+    clearBarcodeInput();
+  }, []);
+
+  const confirmDuplicateScan = useCallback(() => {
+    if (!duplicateScan) return;
+    addProductToCart(duplicateScan.product);
+    setStatusMessage(`Added ${duplicateScan.product.name} from the remote scanner`);
+    closeDuplicateScan();
+  }, [duplicateScan, closeDuplicateScan]);
+
+  useEffect(() => {
+    if (!duplicateScan) return undefined;
+    const handleDuplicateScanKeyDown = (event) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        closeDuplicateScan();
+      }
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        confirmDuplicateScan();
+      }
+    };
+    window.addEventListener('keydown', handleDuplicateScanKeyDown);
+    return () => window.removeEventListener('keydown', handleDuplicateScanKeyDown);
+  }, [duplicateScan, closeDuplicateScan, confirmDuplicateScan]);
 
   const addProductToCart = (med, { clearSearch = false } = {}) => {
     setItems((prev) => {
@@ -582,6 +975,8 @@ export default function App() {
           requiresPrescription: compliance.requiresPrescription,
           ra6675_compliant: compliance.ra6675,
           ra6675Compliant: compliance.ra6675,
+          seniorEligible: Boolean(med.senior_discount_eligible ?? med.seniorDiscountEligible),
+          pwdEligible: Boolean(med.pwd_discount_eligible ?? med.pwdDiscountEligible),
           qty: 1,
           discPct: 0,
         },
@@ -595,22 +990,53 @@ export default function App() {
     }
   };
 
-  const addBySearch = async () => {
-    const term = searchTerm.trim();
-    if (!term) return;
+  useEffect(() => {
+    if (!loggedIn || String(loggedInRole || '').toLowerCase() === 'cashier' || !sessionToken || mustChangePassword) return undefined;
+    let lastScanId = 0;
+    let active = true;
+    let receivingScan = false;
 
-    try {
-      const med = await findProductByTerm(term);
-      if (!med) {
-        setStatusMessage(`No product found for "${term}"`);
-        return;
+    const receiveBarcodeScan = async () => {
+      if (receivingScan) return;
+      receivingScan = true;
+      try {
+        const scan = await api.getLatestBarcodeScan(lastScanId, sessionToken);
+        if (!active || !scan) return;
+        lastScanId = scan.id;
+        if (popupOpenRef.current || Date.parse(scan.createdAt) <= discardRemoteScansBeforeRef.current) return;
+        setSearchTerm(scan.barcode);
+        searchInputRef.current?.focus();
+        const med = await findProductByTerm(scan.barcode);
+        if (!active) return;
+        if (!med) {
+          setStatusMessage(`No product found for barcode ${scan.barcode}`);
+          return;
+        }
+        const previousScan = consecutiveScanRef.current;
+        const count = previousScan.productId === med.id ? previousScan.count + 1 : 1;
+        consecutiveScanRef.current = { productId: med.id, count };
+        if (count === 1) {
+          addProductToCart(med);
+          clearBarcodeInput();
+          setStatusMessage(`Added ${med.name} from the remote scanner`);
+        } else {
+          setSearchTerm(scan.barcode);
+          setDuplicateScan({ product: med, count });
+        }
+      } catch (_error) {
+        // The next polling cycle retries when the server is temporarily unavailable.
+      } finally {
+        receivingScan = false;
       }
+    };
 
-      addProductToCart(med, { clearSearch: true });
-    } catch (err) {
-      setStatusMessage(err.message);
-    }
-  };
+    receiveBarcodeScan();
+    const timer = window.setInterval(receiveBarcodeScan, 700);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [loggedIn, loggedInRole, sessionToken, mustChangePassword]);
 
   const addPriceCheckToCart = () => {
     if (!priceCheckProduct || priceCheckProduct.stock <= 0) return;
@@ -655,10 +1081,6 @@ export default function App() {
     return { label: 'In stock', tone: 'good' };
   };
 
-  const handleSearchKeyDown = (e) => {
-    if (e.key === 'Enter') addBySearch();
-  };
-
   const handleLoginChange = (event) => {
     const { name, value } = event.target;
     setLoginForm((prev) => ({ ...prev, [name]: value }));
@@ -681,10 +1103,16 @@ export default function App() {
     setLoginSubmitting(true);
 
     window.setTimeout(() => {
+      setAuthToken(result.token);
       setLoggedIn(true);
       setLoggedInUser(result.user);
       setLoggedInRole(result.role);
       setSessionToken(result.token);
+      window.sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify({ token: result.token }));
+      setMustChangePassword(Boolean(result.mustChangePassword));
+      if (result.mustChangePassword) {
+        setPasswordChangeForm({ currentPassword: loginForm.password, newPassword: '', confirmPassword: '' });
+      }
       setLoginError('');
       setLoginForm({ username: '', password: '' });
       setStatusMessage(`Welcome back, ${result.user}.`);
@@ -694,15 +1122,86 @@ export default function App() {
   };
 
   const handleLogout = () => {
+    if (sessionToken) {
+      api.logout(sessionToken).catch(() => {});
+    }
     setLoggedIn(false);
+      setAuthToken('');
+      window.sessionStorage.removeItem(SESSION_STORAGE_KEY);
     setLoggedInUser('');
     setLoggedInRole('');
     setSessionToken('');
+    setMustChangePassword(false);
+    setPasswordChangeForm({ currentPassword: '', newPassword: '', confirmPassword: '' });
+    setPasswordChangeError('');
     setUserOpen(false);
     setLoginForm({ username: '', password: '' });
     setLoginError('');
     setShowPassword(false);
     setStatusMessage('Logged out');
+  };
+
+  // Idle auto sign-out (protects an unattended register). Reads the configured
+  // timeout from store settings, then resets a timer on any user activity and
+  // logs out after the timeout elapses. 0 (the default) disables it entirely.
+  useEffect(() => {
+    if (!loggedIn) return undefined;
+    const minutes = Number(readStoreSettings().idleTimeoutMinutes || 0);
+    if (!Number.isFinite(minutes) || minutes <= 0) return undefined;
+
+    let timer = null;
+    const events = ['keydown', 'mousemove', 'click', 'touchstart', 'scroll'];
+    const arm = () => {
+      if (timer) window.clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        setStatusMessage('Signed out after being idle.');
+        handleLogout();
+      }, minutes * 60 * 1000);
+    };
+    events.forEach((name) => window.addEventListener(name, arm, { passive: true }));
+    arm();
+    return () => {
+      if (timer) window.clearTimeout(timer);
+      events.forEach((name) => window.removeEventListener(name, arm));
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loggedIn, sessionToken]);
+
+  const handlePasswordChangeChange = (event) => {
+    const { name, value } = event.target;
+    setPasswordChangeForm((prev) => ({ ...prev, [name]: value }));
+    if (passwordChangeError) setPasswordChangeError('');
+  };
+
+  const handlePasswordChangeSubmit = async (event) => {
+    event.preventDefault();
+    const { currentPassword, newPassword, confirmPassword } = passwordChangeForm;
+
+    if (!newPassword || newPassword.length < 8) {
+      setPasswordChangeError('New password must be at least 8 characters long.');
+      return;
+    }
+    if (!/[A-Za-z]/.test(newPassword) || !/[0-9]/.test(newPassword)) {
+      setPasswordChangeError('New password must contain at least one letter and one number.');
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setPasswordChangeError('New password and confirmation do not match.');
+      return;
+    }
+
+    setPasswordChangeSubmitting(true);
+    setPasswordChangeError('');
+    try {
+      await api.changePassword({ currentPassword, newPassword }, sessionToken);
+      setMustChangePassword(false);
+      setPasswordChangeForm({ currentPassword: '', newPassword: '', confirmPassword: '' });
+      setStatusMessage('Password updated.');
+    } catch (error) {
+      setPasswordChangeError(error.message || 'Unable to change password.');
+    } finally {
+      setPasswordChangeSubmitting(false);
+    }
   };
 
   const handleLoginKeyDown = (event) => {
@@ -757,7 +1256,30 @@ export default function App() {
   };
 
   useEffect(() => {
+    // The legacy cashier checkout view no longer renders — after login the app
+    // shows StockPilot (admin/manager…) or CashierPOS (cashier), and each owns
+    // its own keyboard handling. This legacy global handler must NOT hijack
+    // F1..F11 / Escape / Delete for modern UIs (it previously swallowed those
+    // keys for every non-cashier logged in to StockPilot). It stays attached
+    // only before login, where it is inert.
+    if (loggedIn) return undefined;
     const handleGlobalKeyDown = (event) => {
+      if (quitConfirmOpen) {
+        if (event.key === 'Enter') {
+          event.preventDefault();
+          confirmQuitApp();
+          return;
+        }
+
+        if (event.key === 'Escape' || event.key === 'Esc') {
+          event.preventDefault();
+          closeQuitConfirm();
+          return;
+        }
+
+        return;
+      }
+
       if (removeConfirmOpen) {
         if (event.key === 'Enter') {
           event.preventDefault();
@@ -787,6 +1309,56 @@ export default function App() {
           return;
         }
 
+        return;
+      }
+
+      if (promptModal) {
+        if (event.key === 'Enter') {
+          event.preventDefault();
+          submitPricePrompt();
+          return;
+        }
+
+        if (event.key === 'Escape' || event.key === 'Esc') {
+          event.preventDefault();
+          closePromptModal();
+          return;
+        }
+
+        return;
+      }
+
+      if (payModalOpen) {
+        if (event.key === 'Enter') {
+          event.preventDefault();
+          confirmPay();
+          return;
+        }
+
+        if (event.key === 'Escape' || event.key === 'Esc') {
+          event.preventDefault();
+          setPayModalOpen(false);
+          return;
+        }
+
+        return;
+      }
+
+      if (discountModalOpen) {
+        if (event.key === 'Escape' || event.key === 'Esc') {
+          event.preventDefault();
+          closeDiscountModal();
+          return;
+        }
+        return;
+      }
+
+      if (memberSearchOpen) {
+        if (event.key === 'Escape' || event.key === 'Esc') {
+          event.preventDefault();
+          closeMemberSearch();
+          return;
+        }
         return;
       }
 
@@ -887,6 +1459,16 @@ export default function App() {
         return;
       }
 
+      if (event.key === 'F11') {
+        event.preventDefault();
+        if (items.length === 0) {
+          setStatusMessage('Cart is empty');
+        } else {
+          setPayModalOpen(true);
+        }
+        return;
+      }
+
       if (['F1', 'F3', 'F4', 'F5', 'F6', 'F7', 'F8', 'F9', 'F10', 'Delete', 'Del', 'Escape', 'Esc'].includes(event.key)) {
         event.preventDefault();
         switch (event.key) {
@@ -933,39 +1515,11 @@ export default function App() {
 
     window.addEventListener('keydown', handleGlobalKeyDown);
     return () => window.removeEventListener('keydown', handleGlobalKeyDown);
-  }, [searchTerm, selectedItemId, items, heldSale, cashReceived, payment, lastReceiptId, priceCheckOpen, priceCheckProduct, searchProductOpen, qtyModalOpen, qtyTargetItemId, qtyInputValue, removeConfirmOpen, removeTargetItemId, customerTypeOpen, customerTypeHighlight]);
-
-  const rows = items.map((it) => {
-    const lineSubtotal = it.qty * it.price;
-    const discount = (lineSubtotal * it.discPct) / 100;
-    const total = lineSubtotal - discount;
-    return { ...it, lineSubtotal, discount, total };
-  });
-
-  const subtotal = rows.reduce((sum, r) => sum + r.lineSubtotal, 0);
-  const itemDiscountTotal = rows.reduce((sum, r) => sum + r.discount, 0);
-  const customerDiscount = ['senior', 'pwd'].includes(customerType) ? subtotal * 0.2 : 0;
-  const discountTotal = itemDiscountTotal + customerDiscount;
-  const taxableAmount = Math.max(subtotal - discountTotal, 0);
-  const grandTotal = taxableAmount;
+  }, [loggedInRole, searchTerm, selectedItemId, items, heldSale, cashReceived, payment, lastReceiptId, priceCheckOpen, priceCheckProduct, searchProductOpen, memberSearchOpen, discountModalOpen, qtyModalOpen, qtyTargetItemId, qtyInputValue, removeConfirmOpen, removeTargetItemId, customerTypeOpen, customerTypeHighlight, customerType, customerIdentity, customerInfoModalOpen, payModalOpen, payAmount, promptModal, sessionToken, confirmPay, submitPricePrompt, closePromptModal, quitConfirmOpen, openQuitConfirm, closeQuitConfirm, confirmQuitApp, setPayModalOpen]);
 
   useEffect(() => {
     if (payModalOpen) setPayAmount(String(Number(grandTotal || 0).toFixed(2)));
   }, [payModalOpen, grandTotal]);
-
-  const confirmPay = () => {
-    const parsed = parseFloat(payAmount);
-    if (isNaN(parsed)) {
-      setStatusMessage('Invalid amount');
-      return;
-    }
-    setCashReceived(String(parsed.toFixed(2)));
-    setPayModalOpen(false);
-    setStatusMessage(`Received ${peso(parsed)} — change ${peso(parsed - grandTotal)}`);
-  };
-
-  const headerTime = currentTime.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
-  const headerDate = currentTime.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
 
   const grandTotalRef = useRef(null);
 
@@ -992,7 +1546,7 @@ export default function App() {
       <div className="login-screen login-screen--transition">
         <div className="app-transition">
           <div className="app-transition__logo">
-            <img src={logo} alt={loadingStockPilot ? 'StockPilot' : 'PosPilot'} className="app-transition__logo-image" />
+            <img src={storeLogo} alt={loadingStockPilot ? 'StockPilot' : 'PosPilot'} className="app-transition__logo-image" />
           </div>
           <div className="app-transition__text">Loading {loadingStockPilot ? 'StockPilot' : 'POSPilot'}</div>
         </div>
@@ -1001,17 +1555,31 @@ export default function App() {
 
       }
 
+      if (authInitializing) {
+    return (
+      <div className="login-screen login-screen--transition">
+        <div className="app-transition__text">Restoring session...</div>
+      </div>
+    );
+  }
+
+      if (window.location.pathname === '/scanner') {
+        const scannerTheme = { primary: '#2563EB', primarySoft: '#EFF4FF', bg: '#F8FAFC', card: '#FFFFFF', text: '#1E293B', sub: '#64748B', border: '#E7EBF1', danger: '#EF4444', warningSoft: '#FEF6E7' };
+        return <BarcodeScannerPage t={scannerTheme} sessionToken={sessionToken} />;
+      }
+
       if (!loggedIn) {
     return (
       <div className="login-screen">
+        {canQuitApp && <LoginCloseButton onClick={openQuitConfirm} />}
+        <QuitConfirmDialog open={quitConfirmOpen} onCancel={closeQuitConfirm} onConfirm={confirmQuitApp} />
         <div className="login-card">
           <div className="login-card__brand">
             <div className="login-card__logo">
-              <img src={logo} alt="PosPilot" className="login-card__logo-image" />
+              <img src={storeLogo} alt="Store logo" className="login-card__logo-image" />
             </div>
             <div className="login-card__brand-copy">
-              <p className="login-card__eyebrow login-card__eyebrow--brand">ST. ISIDORE'S</p>
-              <h1 className="login-card__title">Pharmacy</h1>
+              <p className="login-card__eyebrow login-card__eyebrow--brand"><span>{storeNamePrefix}</span>{pharmacySuffix && <strong>{pharmacySuffix}</strong>}</p>
             </div>
           </div>
 
@@ -1070,639 +1638,83 @@ export default function App() {
     );
   }
 
+  if (mustChangePassword) {
+    return (
+      <div className="login-screen">
+        {canQuitApp && <LoginCloseButton onClick={openQuitConfirm} />}
+        <QuitConfirmDialog open={quitConfirmOpen} onCancel={closeQuitConfirm} onConfirm={confirmQuitApp} />
+        <div className="login-card">
+          <div className="login-card__brand">
+            <div className="login-card__logo">
+              <img src={storeLogo} alt="Store logo" className="login-card__logo-image" />
+            </div>
+            <div className="login-card__brand-copy">
+              <p className="login-card__eyebrow login-card__eyebrow--brand"><span>{storeNamePrefix}</span>{pharmacySuffix && <strong>{pharmacySuffix}</strong>}</p>
+            </div>
+          </div>
+
+          <h2 className="login-card__title">Set a new password</h2>
+          <p className="login-card__hint">You are signed in with a temporary default password. Choose a new one (at least 8 characters) before continuing.</p>
+
+          <form className="login-form" onSubmit={handlePasswordChangeSubmit}>
+            <label className="login-field">
+              <span>Current password</span>
+              <input
+                type="password"
+                name="currentPassword"
+                value={passwordChangeForm.currentPassword}
+                onChange={handlePasswordChangeChange}
+                autoComplete="current-password"
+                autoFocus
+              />
+            </label>
+
+            <label className="login-field">
+              <span>New password</span>
+              <input
+                type="password"
+                name="newPassword"
+                value={passwordChangeForm.newPassword}
+                onChange={handlePasswordChangeChange}
+                placeholder="At least 8 characters"
+                autoComplete="new-password"
+              />
+            </label>
+
+            <label className="login-field">
+              <span>Confirm new password</span>
+              <input
+                type="password"
+                name="confirmPassword"
+                value={passwordChangeForm.confirmPassword}
+                onChange={handlePasswordChangeChange}
+                placeholder="Repeat the new password"
+                autoComplete="new-password"
+              />
+            </label>
+
+            {passwordChangeError && <div className="login-error">{passwordChangeError}</div>}
+
+            <button type="submit" className="btn btn--blue login-submit" disabled={passwordChangeSubmitting}>
+              {passwordChangeSubmitting ? 'Saving...' : 'Update password'}
+            </button>
+          </form>
+
+          <div className="login-card__change-footer">
+            <button type="button" className="login-card__change-logout" onClick={handleLogout}>Continue to sign out</button>
+          </div>
+
+          <div className="login-card__footer">
+            <span>Powered by</span>
+            <strong>POSpilot</strong>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (String(loggedInRole || '').toLowerCase() !== 'cashier') {
     return <StockPilotApp loggedInUser={loggedInUser} loggedInRole={loggedInRole} sessionToken={sessionToken} onLogout={handleLogout} />;
   }
-
-  return (
-    <div className="pos" ref={posRef}>
-      <header className="pos-header">
-        <div className="pos-header__brand">
-          <div className="pos-header__logo">
-            <img src={logo} alt="St. Isidore's Pharmacy" className="header-logo" />
-          </div>
-          <div className="pos-header__title">
-            ST. ISIDORE'S <span>PHARMACY</span>
-          </div>
-          <div className="pos-header__divider" />
-          <div className="pos-header__mode">Powered by <span>POSpilot</span></div>
-        </div>
-
-        <div className="pos-header__meta">
-          <div className="pos-header__meta-item">
-            <Clock size={16} />
-            <span>{headerTime} · {headerDate}</span>
-          </div>
-          <span className="pos-header__sep" />
-          <div className="pos-header__meta-item pos-header__status" ref={statusMenuRef}>
-            <button
-              type="button"
-              className="status-toggle"
-              onClick={() => setStatusOpen((open) => !open)}
-            >
-              <CircleCheck size={16} />
-              <span>Status</span>
-              <ChevronDown size={14} />
-            </button>
-            <div className={`status-dropdown ${statusOpen ? 'status-dropdown--open' : ''}`}>
-              <div className="status-dropdown__item">
-                <div className="status-dropdown__label">
-                  <span className={`status-dot ${online ? 'status-dot--green' : 'status-dot--red'}`} />
-                  <span>{online ? 'ONLINE' : 'OFFLINE'}</span>
-                </div>
-                <span className="status-text">{online ? 'Connected' : 'Disconnected'}</span>
-              </div>
-              <div className="status-dropdown__item">
-                <span>Terminal</span>
-                <span className="status-text">PC-01</span>
-              </div>
-              <div className="status-dropdown__item">
-                <span>Printer</span>
-                <span className="status-text status-text--green">CONNECTED</span>
-              </div>
-              <div className="status-dropdown__item">
-                <span>Cash Drawer</span>
-                <span className="status-text status-text--green">CONNECTED</span>
-              </div>
-              <div className="status-dropdown__item">
-                <span>Database</span>
-                <span className="status-text status-text--green">SYNCED 10:29 AM</span>
-              </div>
-            </div>
-          </div>
-          <span className="pos-header__sep" />
-          <div className="pos-header__meta-item pos-header__user" ref={userMenuRef}>
-            <button
-              type="button"
-              className="user-toggle"
-              onClick={() => setUserOpen((open) => !open)}
-            >
-              <User size={16} />
-              <span>{loggedInUser || 'Admin'}</span>
-              <ChevronDown size={14} />
-            </button>
-            <div className={`user-dropdown ${userOpen ? 'user-dropdown--open' : ''}`}>
-              <button
-                type="button"
-                className="user-dropdown__item"
-                onClick={handleLogout}
-              >
-                <LogOut size={14} />
-                Logout
-              </button>
-            </div>
-          </div>
-        </div>
-      </header>
-
-      <main className="pos-main">
-        <section className="pos-left">
-          {statusMessage && (
-            <div className={`status-toast ${online ? 'status-toast--info' : 'status-toast--offline'}`}>
-              {statusMessage}
-            </div>
-          )}
-
-          <div className="card item-list-card">
-            <div className="item-list-card__header">
-              <div className="barcode-search">
-                <div className="search-card__icon">
-                  <ScanBarcode size={26} strokeWidth={1.8} />
-                </div>
-                <input
-                  ref={searchInputRef}
-                  className="search-card__input"
-                  type="text"
-                  placeholder="SCAN BARCODE OR SKU"
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  onKeyDown={handleSearchKeyDown}
-                />
-              </div>
-
-              <div className="item-list-card__heading">
-                <div className="item-list-card__icon">
-                  <ShoppingCart size={20} strokeWidth={2} />
-                </div>
-                <div>
-                  <div className="item-list-card__title">ITEM LIST</div>
-                  <div className="item-list-card__subtitle">{items.length} item(s)</div>
-                </div>
-              </div>
-            </div>
-
-            <div className="item-table" ref={itemTableRef}>
-              <div className="item-table__row item-table__row--head">
-                <div className="col col--med">PRODUCT NAME</div>
-                <div className="col col--qty">QTY</div>
-                <div className="col col--price">PRICE</div>
-                <div className="col col--disc">DISC %</div>
-                <div className="col col--discval">DISCOUNT</div>
-                <div className="col col--total">TOTAL</div>
-              </div>
-
-              {rows.map((row) => {
-                return (
-                  <div
-                    className={`item-table__row ${selectedItemId === row.id ? 'item-table__row--selected' : ''}`}
-                    key={row.id}
-                    ref={selectedItemId === row.id ? selectedRowRef : null}
-                    onClick={() => setSelectedItemId(row.id)}
-                  >
-                    <div className="col col--med">
-                      <div className="med-name">{row.name}</div>
-                    </div>
-                    <div className="col col--qty">
-                      <div className="qty-cell">
-                        <span className="qty-stepper__value">{row.qty}</span>
-                      </div>
-                    </div>
-                    <div className="col col--price">{row.price.toFixed(2)}</div>
-                    <div className={`col col--disc ${row.discPct > 0 ? 'is-positive' : ''}`}>
-                      {row.discPct}%
-                    </div>
-                    <div className={`col col--discval ${row.discount > 0 ? 'is-positive' : ''}`}>
-                      {row.discount.toFixed(2)}
-                    </div>
-                    <div className="col col--total">{row.total.toFixed(2)}</div>
-                  </div>
-                );
-              })}
-            </div>
-            
-            <div className="totals-box item-list-card__totals">
-              <div className="totals-row totals-row--subtotal">
-                <span>SUBTOTAL</span>
-                <span>{peso(subtotal)}</span>
-              </div>
-              <div className="totals-row totals-row--discount">
-                <span>{['senior', 'pwd'].includes(customerType) ? 'SENIOR/PWD DISC.' : 'DISCOUNT'}</span>
-                <span>-{peso(discountTotal)}</span>
-              </div>
-              {/* VAT removed per request */}
-              <div className="totals-divider" />
-              <div className="totals-row totals-row--grand">
-                <span>GRAND TOTAL</span>
-                <span className="totals-row__amount" ref={grandTotalRef}>{peso(grandTotal)}</span>
-              </div>
-            </div>
-
-            {/* Walk-in / Loyalty / Pay panel buttons removed as requested */}
-          </div>
-        </section>
-
-        <aside className="pos-right">
-          <div className="function-panel">
-            <div className="function-keys">
-              {functionKeys.map(({ key, label, icon: Icon, tone, action }) => (
-                <button
-                  key={key}
-                  className={`fn-key ${tone === 'danger' ? 'fn-key--danger' : ''} ${action === 'held' ? 'fn-key--held' : ''}`}
-                  type="button"
-                  onClick={() => handleAction(action)}
-                >
-                  <span className="fn-key__badge">{key}</span>
-                  {action === 'held' && heldOrderCount > 0 && (
-                    <span className="fn-key__count">{heldOrderCount}</span>
-                  )}
-                  <span className="fn-key__icon">
-                    <Icon size={20} strokeWidth={2} />
-                  </span>
-                  <span className="fn-key__label">{label}</span>
-                </button>
-              ))}
-            </div>
-
-            <div className="function-keys-bottom">
-              <button type="button" className="fn-key fn-key--pay fn-key--f9" onClick={() => handleAction('customer')}>
-                <span className="fn-key__badge">F9</span>
-                <span className="fn-key__icon"><User size={18} strokeWidth={2} /></span>
-                <span className="fn-key__label">CUSTOMER</span>
-              </button>
-
-              <button type="button" className="fn-key fn-key--pay fn-key--f5" onClick={() => handleAction('discount')}>
-                <span className="fn-key__badge">F5</span>
-                <span className="fn-key__icon"><Percent size={18} strokeWidth={2} /></span>
-                <span className="fn-key__label">DISCOUNT</span>
-              </button>
-
-              <button type="button" className="fn-key fn-key--amber fn-key--pay" onClick={() => setStatusMessage('Payment function disabled')}>
-                <span className="fn-key__badge">F11</span>
-                <span className="fn-key__icon"><Banknote size={18} strokeWidth={2} /></span>
-                <span className="fn-key__label">PAY</span>
-              </button>
-            </div>
-
-            <div className="right-actions" />
-          </div>
-        </aside>
-      </main>
-
-      
-
-      {payModalOpen && (
-        <div
-          className="qty-overlay"
-          role="presentation"
-        >
-          <div
-            className="qty-modal"
-            onClick={(event) => event.stopPropagation()}
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="pay-modal-title"
-          >
-            <div className="qty-modal__header">
-              <div className="qty-modal__heading">
-                <Banknote size={18} strokeWidth={2.2} />
-                <span id="pay-modal-title">Receive Payment</span>
-              </div>
-              <button type="button" className="qty-modal__close" onClick={closePayModal}>
-                <X />
-              </button>
-            </div>
-
-            <div className="qty-modal__body">
-              <div className="qty-modal__product-card">
-                <div className="qty-modal__product-title">Enter amount received</div>
-              </div>
-
-              <label className="qty-modal__label">Amount</label>
-              <input
-                className="qty-modal__input"
-                type="number"
-                step="0.01"
-                value={payAmount}
-                onChange={(e) => setPayAmount(e.target.value)}
-                autoFocus
-              />
-
-              <div style={{ marginTop: 12, fontWeight: 800 }}>
-                Change: {peso((parseFloat(payAmount) || 0) - grandTotal)}
-              </div>
-
-              <div className="qty-modal__actions">
-                <button type="button" className="btn btn--outline-amber" onClick={closePayModal}>Cancel</button>
-                <button type="button" className="btn btn--complete" onClick={confirmPay}>Accept</button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {removeConfirmOpen && (
-        <div
-          className="remove-confirm-overlay"
-          role="presentation"
-        >
-          <div
-            className="remove-confirm-modal"
-            onClick={(event) => event.stopPropagation()}
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="remove-confirm-title"
-          >
-            <div className="remove-confirm-modal__header">
-              <div className="remove-confirm-modal__heading">
-                <Trash2 size={18} strokeWidth={2.2} />
-                <span>Remove Item</span>
-              </div>
-              <button
-                type="button"
-                className="remove-confirm-modal__close"
-                onClick={closeRemoveConfirm}
-                aria-label="Cancel remove"
-              >
-                <X size={18} />
-              </button>
-            </div>
-
-            <div className="remove-confirm-modal__body">
-              {(() => {
-                const selected = items.find((item) => item.id === removeTargetItemId);
-                return selected ? (
-                  <>
-                    <div className="remove-confirm-modal__product-card">
-                      <div className="remove-confirm-modal__product-name">{selected.name}</div>
-                      {selected.generic && <div className="remove-confirm-modal__product-generic">{selected.generic}</div>}
-                      <div className="remove-confirm-modal__product-meta">
-                        <span>Qty: {selected.qty}</span>
-                        <span>₱{peso(selected.price)}</span>
-                      </div>
-                    </div>
-                  </>
-                ) : null;
-              })()}
-            </div>
-
-            <div className="remove-confirm-modal__actions">
-              <button type="button" className="btn btn--outline-blue" onClick={closeRemoveConfirm}>
-                Cancel (Esc)
-              </button>
-              <button type="button" className="btn btn--danger" onClick={confirmRemoveItem}>
-                Remove (Enter)
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {qtyModalOpen && (
-        <div
-          className="qty-overlay"
-          role="presentation"
-        >
-          <div
-            className="qty-modal"
-            onClick={(event) => event.stopPropagation()}
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="qty-modal-title"
-          >
-            <div className="qty-modal__header">
-              <div className="qty-modal__heading">
-                <Plus size={18} strokeWidth={2.2} />
-                <span>Update Quantity</span>
-              </div>
-              <button
-                type="button"
-                className="qty-modal__close"
-                onClick={closeQtyModal}
-                aria-label="Close quantity editor"
-              >
-                <X size={18} />
-              </button>
-            </div>
-
-            <div className="qty-modal__body">
-              {(() => {
-                const selected = items.find((item) => item.id === qtyTargetItemId);
-                return selected ? (
-                  <>
-                    <div className="qty-modal__product-card">
-                      <div className="qty-modal__product-title">{selected.name}</div>
-                      {selected.generic && <div className="qty-modal__product-generic">{selected.generic}</div>}
-                      <div className="qty-modal__product-meta">
-                        <span>Current Qty: {selected.qty}</span>
-                        <span>Price: ₱{peso(selected.price)}</span>
-                      </div>
-                    </div>
-
-                    <label className="qty-modal__label" htmlFor="qty-input">
-                      Enter new quantity
-                    </label>
-                    <input
-                      id="qty-input"
-                      ref={qtyInputRef}
-                      className="qty-modal__input"
-                      type="text"
-                      inputMode="numeric"
-                      value={qtyInputValue}
-                      onChange={(event) => {
-                        const nextValue = event.target.value;
-                        if (nextValue === '' || /^\d*$/.test(nextValue)) {
-                          setQtyInputValue(nextValue);
-                          if (qtyError) setQtyError('');
-                        }
-                      }}
-                      onFocus={(event) => event.target.select()}
-                      onKeyDown={(event) => {
-                        if (event.key === 'Enter') {
-                          event.preventDefault();
-                          submitQtyChange();
-                        }
-                      }}
-                    />
-                    {qtyError && <div className="qty-modal__error">{qtyError}</div>}
-                  </>
-                ) : null;
-              })()}
-            </div>
-
-            <div className="qty-modal__actions">
-              <button type="button" className="btn btn--outline-blue" onClick={closeQtyModal}>
-                Cancel (Esc)
-              </button>
-              <button type="button" className="btn btn--blue" onClick={submitQtyChange}>
-                Update (Enter)
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {customerInfoModalOpen && (
-        <div className="customer-info-overlay" role="presentation">
-          <div
-            className="customer-info-modal"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="customer-info-title"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <div className="customer-info-modal__header">
-              <div className="customer-info-modal__heading">
-                <User size={18} strokeWidth={2.2} />
-                <span id="customer-info-title">
-                  {customerType === 'senior' ? 'Senior Citizen Details' : 'PWD Details'}
-                </span>
-              </div>
-              <button
-                type="button"
-                className="customer-info-modal__close"
-                onClick={() => closeCustomerInfoModal(true)}
-                aria-label="Close customer details"
-              >
-                <X size={18} />
-              </button>
-            </div>
-
-            <div className="customer-info-modal__body">
-              <div className="customer-info-modal__note">
-                {customerType === 'senior'
-                  ? 'Republic Act No. 9994 — Expanded Senior Citizens Act of 2010'
-                  : 'Republic Act No. 7277 — Magna Carta for Persons with Disability'}
-              </div>
-
-              <label className="customer-info-modal__field">
-                <span>{customerType === 'senior' ? 'Senior ID' : 'PWD ID'}</span>
-                <input
-                  ref={customerIdInputRef}
-                  type="text"
-                  value={customerIdentity.id}
-                  onChange={(event) => setCustomerIdentity((prev) => ({ ...prev, id: event.target.value }))}
-                  placeholder={customerType === 'senior' ? 'SENIOR-0001' : 'PWD-0001'}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter') {
-                      event.preventDefault();
-                      saveCustomerIdentity();
-                    }
-                  }}
-                />
-              </label>
-
-              <label className="customer-info-modal__field">
-                <span>Name</span>
-                <input
-                  ref={customerNameInputRef}
-                  type="text"
-                  value={customerIdentity.name}
-                  onChange={(event) => setCustomerIdentity((prev) => ({ ...prev, name: event.target.value }))}
-                  placeholder="Juan Dela Cruz"
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter') {
-                      event.preventDefault();
-                      saveCustomerIdentity();
-                    }
-                  }}
-                />
-              </label>
-            </div>
-
-            <div className="customer-info-modal__actions">
-              <button type="button" className="btn btn--outline-blue" onClick={() => closeCustomerInfoModal(true)}>
-                Cancel (Esc)
-              </button>
-              <button type="button" className="btn btn--blue" onClick={saveCustomerIdentity}>
-                Save (Enter)
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      <ProductSearchModal
-        open={searchProductOpen}
-        onClose={closeSearchProduct}
-        onSelectProduct={handleSearchProductSelect}
-      />
-
-      {priceCheckOpen && (
-        <div
-          className="price-check-overlay"
-          role="presentation"
-        >
-          <div
-            className="price-check-modal"
-            onClick={(event) => event.stopPropagation()}
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="price-check-title"
-          >
-            <div className="price-check-modal__header">
-              <div className="price-check-modal__heading">
-                <Tag size={18} strokeWidth={2.2} />
-                <span>Price Check</span>
-              </div>
-              <button
-                type="button"
-                className="price-check-modal__close"
-                onClick={closePriceCheck}
-                aria-label="Close price check"
-              >
-                <X size={18} />
-              </button>
-            </div>
-
-            <div className="price-check-modal__body">
-              {!priceCheckProduct ? (
-                <>
-                  <div className="price-check-scan">
-                    <div className="price-check-scan__icon">
-                      <ScanBarcode size={24} strokeWidth={1.8} />
-                    </div>
-                    <input
-                      ref={priceCheckInputRef}
-                      className="price-check-scan__input"
-                      type="text"
-                      placeholder="SCAN BARCODE OR SKU"
-                      value={priceCheckInput}
-                      onChange={(event) => {
-                        setPriceCheckInput(event.target.value);
-                        if (priceCheckError) setPriceCheckError('');
-                      }}
-                      onKeyDown={handlePriceCheckInputKeyDown}
-                    />
-                  </div>
-                  {priceCheckError && (
-                    <div className="price-check-modal__error">{priceCheckError}</div>
-                  )}
-                  <p className="price-check-modal__hint">Scan or type a barcode, then press Enter</p>
-                </>
-              ) : (
-                <>
-                  <h2 id="price-check-title" className="price-check-modal__name">
-                    {priceCheckProduct.name}
-                  </h2>
-                  {priceCheckProduct.generic && (
-                    <p className="price-check-modal__generic">{priceCheckProduct.generic}</p>
-                  )}
-
-                  <div className="price-check-modal__price">
-                    <span className="price-check-modal__price-label">Retail Price</span>
-                    <span className="price-check-modal__price-value">₱{peso(priceCheckProduct.price)}</span>
-                  </div>
-
-                  <div className="price-check-modal__details">
-                    <div className="price-check-detail">
-                      <Barcode size={16} />
-                      <div>
-                        <span className="price-check-detail__label">Barcode</span>
-                        <span className="price-check-detail__value">{priceCheckProduct.barcode || '—'}</span>
-                      </div>
-                    </div>
-                    <div className="price-check-detail">
-                      <Package size={16} />
-                      <div>
-                        <span className="price-check-detail__label">Stock on hand</span>
-                        <span className="price-check-detail__value">
-                          {priceCheckProduct.stock} unit{priceCheckProduct.stock === 1 ? '' : 's'}
-                          <span className={`price-check-stock price-check-stock--${getStockStatus(priceCheckProduct.stock).tone}`}>
-                            {getStockStatus(priceCheckProduct.stock).label}
-                          </span>
-                        </span>
-                      </div>
-                    </div>
-                    <div className="price-check-detail">
-                      <CalendarClock size={16} />
-                      <div>
-                        <span className="price-check-detail__label">Batch / Expiry</span>
-                        <span className="price-check-detail__value">
-                          {priceCheckProduct.batch || '—'} · {priceCheckProduct.exp || '—'}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-
-                </>
-              )}
-            </div>
-
-            <div className="price-check-modal__actions">
-              <button
-                type="button"
-                className="btn btn--outline-blue"
-                onClick={closePriceCheck}
-                aria-label="Cancel price check (Esc)"
-              >
-                Cancel (Esc)
-              </button>
-              {priceCheckProduct && (
-                <button
-                  type="button"
-                  className="btn btn--blue"
-                  onClick={addPriceCheckToCart}
-                  disabled={priceCheckProduct.stock <= 0}
-                  aria-label="Add to cart (Enter)"
-                >
-                  <ShoppingCart size={16} />
-                  Add to Cart (Enter)
-                </button>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
+  return <CashierPOS loggedInUser={loggedInUser} loggedInRole={loggedInRole} sessionToken={sessionToken} onLogout={handleLogout} />;
 }

@@ -1,31 +1,55 @@
 import React from "react";
-import { Boxes, ChevronsLeft, ChevronsRight } from "lucide-react";
+import { ChevronsLeft, ChevronsRight, X } from "lucide-react";
 import { NAV_SECTIONS } from "../data/navigation";
 
-export default function Sidebar({ active, setActive, collapsed, setCollapsed, t }) {
+export default function Sidebar({ active, setActive, collapsed, setCollapsed, mobileOpen, onClose, t, role, storeName = "StockPilot", storeLogo }) {
+  const normalizedRole = String(role || "").trim().toLowerCase();
+  const visibleSections = NAV_SECTIONS.map((section) => ({
+    ...section,
+    items: section.items.filter((item) => !item.roles || item.roles.includes(normalizedRole)),
+  })).filter((section) => section.items.length > 0);
+
   return (
-    <aside
-      className="hidden md:flex flex-col shrink-0 transition-all duration-300 h-screen sticky top-0"
-      style={{ width: collapsed ? 76 : 264, background: t.card, borderRight: `1px solid ${t.border}` }}
-    >
+    <>
+      {mobileOpen && (
+        <button
+          type="button"
+          aria-label="Close navigation"
+          onClick={onClose}
+          className="fixed inset-0 z-30 bg-slate-950/30 md:hidden"
+        />
+      )}
+      <aside
+        className={`fixed inset-y-0 left-0 z-40 flex w-[264px] flex-col shrink-0 h-screen transition-transform duration-300 md:relative md:inset-auto md:z-auto md:translate-x-0 md:sticky md:top-0 ${collapsed ? "md:w-[76px]" : "md:w-[264px]"} ${mobileOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"}`}
+        style={{ background: t.card, borderRight: `1px solid ${t.border}` }}
+      >
       <div className="flex items-center gap-3 px-5 h-16 shrink-0" style={{ borderBottom: `1px solid ${t.border}` }}>
-        <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0" style={{ background: t.primary }}>
-          <Boxes size={18} color="#fff" />
+        <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0 overflow-hidden" style={{ background: t.primary }}>
+          {storeLogo ? <img src={storeLogo} alt="" className="w-full h-full object-contain" /> : null}
         </div>
         {!collapsed && (
           <div className="min-w-0">
             <p className="text-sm font-bold truncate" style={{ color: t.text, fontFamily: "Manrope, sans-serif" }}>
-              StockPilot
+              {storeName}
             </p>
             <p className="text-[11px] truncate" style={{ color: t.sub }}>
               Inventory & POS
             </p>
           </div>
         )}
+        <button
+          type="button"
+          aria-label="Close navigation"
+          onClick={onClose}
+          className="ml-auto flex h-9 w-9 items-center justify-center rounded-xl md:hidden"
+          style={{ color: t.sub, background: t.bg }}
+        >
+          <X size={17} />
+        </button>
       </div>
 
       <nav className="flex-1 overflow-y-auto px-3 py-4 space-y-5">
-        {NAV_SECTIONS.map((section) => (
+        {visibleSections.map((section) => (
           <div key={section.label}>
             {!collapsed && (
               <p className="px-3 mb-1.5 text-[10px] font-bold tracking-wider uppercase" style={{ color: t.sub }}>
@@ -39,7 +63,10 @@ export default function Sidebar({ active, setActive, collapsed, setCollapsed, t 
                 return (
                   <button
                     key={item.id}
-                    onClick={() => setActive(item.id)}
+                    onClick={() => {
+                      setActive(item.id);
+                      onClose();
+                    }}
                     title={collapsed ? item.label : undefined}
                     className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors relative group"
                     style={{ background: isActive ? t.primarySoft : "transparent", color: isActive ? t.primary : t.sub }}
@@ -72,6 +99,7 @@ export default function Sidebar({ active, setActive, collapsed, setCollapsed, t 
           )}
         </button>
       </div>
-    </aside>
+      </aside>
+    </>
   );
 }
