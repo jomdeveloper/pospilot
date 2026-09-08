@@ -11,10 +11,9 @@ import Dialog from "./Dialog.jsx";
 const SHORTCUTS = [
   ["Ctrl + H", "About / Help"],
   ["F1", "Product Search"],
-  ["F2", "Customer"],
+  ["F4", "Customer"],
   ["F3", "Quantity"],
-  ["F4", "Discount"],
-  ["F5", "Price Check"],
+  ["F5", "Discount"],
   ["F6", "Hold Sale"],
   ["F7", "Recall"],
   ["F8", "Pay Amount Due"],

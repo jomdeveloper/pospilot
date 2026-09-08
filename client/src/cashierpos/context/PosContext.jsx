@@ -7,7 +7,7 @@
  */
 import React, { createContext, useContext, useMemo, useReducer, useEffect, useRef } from "react";
 import { createInitialState, posReducer } from "./posReducer";
-import { formatInvoiceNo, recomputeTotals } from "../utils/calculations";
+import { formatInvoiceNo, lineNet, recomputeTotals } from "../utils/calculations";
 import { api } from "../../api";
 
 const STORAGE_KEY = "cashierpos-held-sales-v1";
@@ -67,7 +67,10 @@ export function PosProvider({ children, runtime = null, initialSaleNumber = 1 })
     return {
       ...base,
       heldSales: Array.isArray(persisted.heldSales) ? persisted.heldSales : [],
-      saleNumber: persisted.saleNumber > 0 ? persisted.saleNumber : base.saleNumber,
+      // Invoice numbering is database-owned. Browser storage may retain an
+      // old counter after the database is reset, so it must never override the
+      // live seed supplied by the server.
+      saleNumber: base.saleNumber,
     };
   });
   const stateRef = useRef(state);
@@ -101,6 +104,7 @@ export function PosProvider({ children, runtime = null, initialSaleNumber = 1 })
               productId: line.productId || line.id || null,
               customerType: sale.customerType || "walkin",
               customer: sale.customerName || "Walk-in",
+              taxType: String(line.taxType || line.tax_type || "VATABLE").toUpperCase(),
               seniorDiscountEligible: Boolean(line.seniorDiscountEligible),
               pwdDiscountEligible: Boolean(line.pwdDiscountEligible),
             })) : [],
@@ -174,7 +178,7 @@ export function PosProvider({ children, runtime = null, initialSaleNumber = 1 })
       clearFlash: () => dispatch({ type: "CLEAR_FLASH" }),
       setSaleNumber: (number) => dispatch({ type: "SET_SALE_NUMBER", number })
     }),
-    []
+    [runtime?.sessionToken]
   );
 
   const currentLine =
@@ -317,7 +321,9 @@ export function PosProvider({ children, runtime = null, initialSaleNumber = 1 })
             type: "void",
             lineId: line.id,
             name: line.name,
-            qty: line.qty
+            qty: line.qty,
+            price: line.price,
+            total: lineNet(line)
           });
         }
         break;
@@ -400,6 +406,10 @@ export function PosProvider({ children, runtime = null, initialSaleNumber = 1 })
 
       case "printerSettings":
         actions.openDialog({ type: "printerSettings" });
+        break;
+
+      case "registerActions":
+        actions.openDialog({ type: "registerActions" });
         break;
 
       default:

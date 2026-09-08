@@ -92,6 +92,40 @@ function getOpenSessionForTerminal(terminal) {
     .get(String(terminal || 'POS-02'));
 }
 
+function ensureCashierActivity(session, userId, username) {
+  if (!session || !userId || !username) return null;
+  const existing = db.prepare(
+    `SELECT * FROM register_cashier_activity
+     WHERE cashier_session_id = ? AND user_id = ? AND status = 'Active'
+     ORDER BY id DESC LIMIT 1`
+  ).get(session.id, userId);
+  if (existing) return { activity: existing, created: false };
+  const result = db.prepare(
+    `INSERT INTO register_cashier_activity (cashier_session_id, user_id, username)
+     VALUES (?, ?, ?)`
+  ).run(session.id, userId, username);
+  return {
+    activity: db.prepare('SELECT * FROM register_cashier_activity WHERE id = ?').get(result.lastInsertRowid),
+    created: true,
+  };
+}
+
+function endCashierActivityForUser(userId) {
+  return db.prepare(
+    `UPDATE register_cashier_activity
+     SET status = 'Ended', ended_at = datetime('now', 'localtime')
+     WHERE user_id = ? AND status = 'Active'`
+  ).run(userId).changes;
+}
+
+function endCashierActivityForSession(sessionId) {
+  return db.prepare(
+    `UPDATE register_cashier_activity
+     SET status = 'Ended', ended_at = datetime('now', 'localtime')
+     WHERE cashier_session_id = ? AND status = 'Active'`
+  ).run(sessionId).changes;
+}
+
 function sessionRef() {
   const now = new Date();
   const pad = (n) => String(n).padStart(2, '0');
@@ -141,7 +175,7 @@ function cashRefundsForSession(sessionId) {
       `SELECT COALESCE(SUM(sr.refund_amount), 0) AS cash_refunds
        FROM sale_returns sr
        JOIN sales s ON s.id = sr.sale_id
-       WHERE s.cashier_session_id = ? AND s.cash_amount > 0`
+      WHERE s.cashier_session_id = ? AND s.cash_amount > 0 AND lower(sr.refund_method) = 'cash'`
     )
     .get(sessionId);
   return roundMoney(Number(row.cash_refunds) || 0);
@@ -218,15 +252,15 @@ function recordCashMovement(
   transactionType,
   amount,
   reason,
-  { notes = null, reference = null, update = null } = {}
+  { notes = null, reference = null, update = null, actorUserId = null, actorUsername = null } = {}
 ) {
   const { store, branch } = storeIdentity();
   const ref = movementRef(transactionType);
   db.prepare(
     `INSERT INTO cash_transactions
        (transaction_ref, cashier_session_id, store, branch, terminal, cashier_user_id, cashier_username,
-        transaction_type, amount, reason, notes, reference)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        actor_user_id, actor_username, transaction_type, amount, reason, notes, reference)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     ref,
     session.id,
@@ -235,6 +269,8 @@ function recordCashMovement(
     session.terminal,
     session.cashier_user_id,
     session.cashier_username,
+    actorUserId || session.cashier_user_id,
+    actorUsername || session.cashier_username,
     transactionType,
     amount,
     reason,
@@ -257,6 +293,9 @@ module.exports = {
   assertOpenSession,
   getSession,
   getOpenSessionForTerminal,
+  ensureCashierActivity,
+  endCashierActivityForUser,
+  endCashierActivityForSession,
   sessionRef,
   movementRef,
   storeIdentity,

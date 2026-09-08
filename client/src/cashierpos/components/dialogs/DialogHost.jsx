@@ -24,6 +24,9 @@ import CashMovementDialog from "./CashMovementDialog.jsx";
 import CloseRegisterDialog from "./CloseRegisterDialog.jsx";
 import ItemNotFoundDialog from "./ItemNotFoundDialog.jsx";
 import TransactionActionsDialog from "./TransactionActionsDialog.jsx";
+import ReprintDialog from "./ReprintDialog.jsx";
+import RepeatedBarcodeDialog from "./RepeatedBarcodeDialog.jsx";
+import RegisterActionsDialog from "./RegisterActionsDialog.jsx";
 
 export default function DialogHost() {
   const { state, runtime } = usePos();
@@ -42,6 +45,8 @@ export default function DialogHost() {
       return <CloseRegisterDialog key="closeRegister" />;
     case "notFound":
       return <ItemNotFoundDialog key={"notFound-" + (dialog.code || "unknown")} dialog={dialog} />;
+    case "repeatedBarcode":
+      return <RepeatedBarcodeDialog key={"repeatedBarcode-" + dialog.barcode} dialog={dialog} />;
     case "customer":
       return <CustomerDialog key="customer" />;
     case "quantity":
@@ -70,6 +75,10 @@ export default function DialogHost() {
       return <CancelTransactionDialog key="cancelTransaction" />;
     case "transactionActions":
       return <TransactionActionsDialog key="transactionActions" initialMode={dialog.mode || "void"} />;
+    case "reprint":
+      return <ReprintDialog key="reprint" />;
+    case "registerActions":
+      return <RegisterActionsDialog key="registerActions" />;
     default:
       return null;
   }

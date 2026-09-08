@@ -25,6 +25,29 @@ body.stockpilot-body #root {
   min-height: 100vh;
 }
 
+@keyframes stockpilot-dialog-fade-in {
+  from { opacity: 0; transform: translateY(8px) scale(0.985); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes stockpilot-dialog-fade-out {
+  from { opacity: 1; transform: translateY(0) scale(1); }
+  to { opacity: 0; transform: translateY(8px) scale(0.985); }
+}
+
+/* Shared motion for StockPilot's page-level modal overlays. */
+.stockpilot-shell .fixed.inset-0[class*="z-"] {
+  animation: stockpilot-dialog-fade-in 180ms ease-out both;
+}
+
+.stockpilot-shell .fixed.inset-0[class*="z-"] > :first-child {
+  animation: stockpilot-dialog-fade-in 220ms ease-out both;
+}
+
+.stockpilot-dialog-fade-out {
+  animation: stockpilot-dialog-fade-out 180ms ease-in forwards !important;
+}
+
 .stockpilot-shell main {
   min-width: 0;
 }

@@ -1,6 +1,7 @@
 const express = require('express');
 const db = require('../db');
-const { authenticate } = require('./auth');
+const { authenticate, requireCategoryManager } = require('./auth');
+const { auditLog } = require('../audit');
 
 const router = express.Router();
 
@@ -73,7 +74,7 @@ router.get('/', authenticate, (req, res) => {
 });
 
 // PUT /api/settings — persist store configuration to the database
-router.put('/', authenticate, (req, res) => {
+router.put('/', requireCategoryManager, (req, res) => {
   const body = req.body || {};
   const current = readSettingsRow();
   const merged = {};
@@ -95,6 +96,9 @@ router.put('/', authenticate, (req, res) => {
      VALUES (1, ?, datetime('now', 'localtime'))
      ON CONFLICT(id) DO UPDATE SET data_json = excluded.data_json, updated_at = excluded.updated_at`
   ).run(JSON.stringify(merged));
+
+  const changedKeys = Object.keys(DEFAULTS).filter((key) => String(current[key] ?? DEFAULTS[key]) !== String(merged[key]));
+  auditLog(req, 'Updated system settings', 'Settings', 'store', { changedKeys });
 
   res.json({ ok: true, settings: merged });
 });

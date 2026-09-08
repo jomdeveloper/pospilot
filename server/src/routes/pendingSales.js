@@ -1,9 +1,21 @@
 const express = require('express');
 const db = require('../db');
-const { authenticate } = require('./auth');
+const { requireRole } = require('./auth');
 const { auditLog } = require('../audit');
 
 const router = express.Router();
+const requireCashierOrAbove = requireRole('administrator', 'admin', 'manager', 'cashier');
+
+function elevated(req) {
+  return ['administrator', 'admin', 'manager'].includes(String(req.session?.role || '').trim().toLowerCase());
+}
+
+function sessionActivity(req, sessionId) {
+  return db.prepare(
+    `SELECT 1 FROM register_cashier_activity
+     WHERE cashier_session_id = ? AND user_id = ? AND status = 'Active'`
+  ).get(sessionId, req.session.userId);
+}
 
 function serializePendingSale(row) {
   return {
@@ -21,18 +33,20 @@ function serializePendingSale(row) {
   };
 }
 
-router.get('/', authenticate, (req, res) => {
-  const rows = db.prepare(`
-    SELECT * FROM pending_sales
-    WHERE status = 'active'
-    ORDER BY created_at DESC, id DESC
-    LIMIT 200
-  `).all();
+router.get('/', requireCashierOrAbove, (req, res) => {
+  const rows = elevated(req)
+    ? db.prepare(`SELECT * FROM pending_sales WHERE status = 'active' ORDER BY created_at DESC, id DESC LIMIT 200`).all()
+    : db.prepare(`
+        SELECT ps.* FROM pending_sales ps
+        JOIN register_cashier_activity rca ON rca.cashier_session_id = ps.cashier_session_id
+        WHERE ps.status = 'active' AND rca.user_id = ? AND rca.status = 'Active'
+        ORDER BY ps.created_at DESC, ps.id DESC LIMIT 200
+      `).all(req.session.userId);
 
   return res.json({ pendingSales: rows.map(serializePendingSale) });
 });
 
-router.post('/', authenticate, (req, res) => {
+router.post('/', requireCashierOrAbove, (req, res) => {
   const body = req.body || {};
   const cashierSessionId = body.cashierSessionId == null || body.cashierSessionId === '' ? null : Number(body.cashierSessionId);
   const customerName = String(body.customerName || body.customer || 'Walk-in Customer').trim() || 'Walk-in Customer';
@@ -48,6 +62,9 @@ router.post('/', authenticate, (req, res) => {
     const session = db.prepare('SELECT id, status FROM cashier_sessions WHERE id = ?').get(cashierSessionId);
     if (!session) return res.status(404).json({ error: 'Cashier session not found.' });
     if (session.status !== 'Open') return res.status(409).json({ error: 'Cashier session is already closed.' });
+    if (!elevated(req) && !sessionActivity(req, cashierSessionId)) return res.status(403).json({ error: 'You are not assigned to this register session.' });
+  } else if (!elevated(req)) {
+    return res.status(400).json({ error: 'An open cashier session is required.' });
   }
 
   const result = db.prepare(`
@@ -67,7 +84,7 @@ router.post('/', authenticate, (req, res) => {
   return res.status(201).json({ pendingSale: serializePendingSale(row) });
 });
 
-router.patch('/:id/recall', authenticate, (req, res) => {
+router.patch('/:id/recall', requireCashierOrAbove, (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id) || id <= 0) {
     return res.status(400).json({ error: 'Pending sale id is invalid.' });
@@ -76,6 +93,7 @@ router.patch('/:id/recall', authenticate, (req, res) => {
   const existing = db.prepare('SELECT * FROM pending_sales WHERE id = ?').get(id);
   if (!existing) return res.status(404).json({ error: 'Pending sale not found.' });
   if (existing.status !== 'active') return res.status(409).json({ error: 'This pending sale is no longer available for recall.' });
+  if (!elevated(req) && !sessionActivity(req, existing.cashier_session_id)) return res.status(403).json({ error: 'You are not assigned to this register session.' });
 
   db.prepare(`
     UPDATE pending_sales
@@ -95,6 +113,11 @@ router.patch('/:id/recall', authenticate, (req, res) => {
 function transitionPendingSale(req, res, nextStatus, message) {
   const id = Number(req.params.id);
   if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: 'Pending sale id is invalid.' });
+  const existing = db.prepare('SELECT * FROM pending_sales WHERE id = ?').get(id);
+  if (!existing) return res.status(404).json({ error: 'Pending sale not found.' });
+  if (!elevated(req) && Number(existing.recalled_by_user_id) !== Number(req.session.userId)) {
+    return res.status(403).json({ error: 'Only the cashier who recalled this sale can change it.' });
+  }
   const result = db.prepare(`
     UPDATE pending_sales
     SET status = ?
@@ -106,7 +129,7 @@ function transitionPendingSale(req, res, nextStatus, message) {
   return res.json({ pendingSale: serializePendingSale(row), status: nextStatus });
 }
 
-router.patch('/:id/complete', authenticate, (req, res) => transitionPendingSale(req, res, 'completed', 'This pending sale is not in progress.'));
-router.patch('/:id/cancel', authenticate, (req, res) => transitionPendingSale(req, res, 'cancelled', 'This pending sale is not in progress.'));
+router.patch('/:id/complete', requireCashierOrAbove, (req, res) => transitionPendingSale(req, res, 'completed', 'This pending sale is not in progress.'));
+router.patch('/:id/cancel', requireCashierOrAbove, (req, res) => transitionPendingSale(req, res, 'cancelled', 'This pending sale is not in progress.'));
 
 module.exports = router;

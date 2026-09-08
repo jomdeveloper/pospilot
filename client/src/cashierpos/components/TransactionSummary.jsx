@@ -33,6 +33,11 @@ export default function TransactionSummary() {
         <span className="side-summary__value">{formatPeso(summary.subtotal)}</span>
       </div>
 
+      <div className="side-summary__row">
+        <span className="side-summary__label">VAT (12%)</span>
+        <span className="side-summary__value">{formatPeso(summary.vat)}</span>
+      </div>
+
       {summary.discount > 0 && (
         <div className="side-summary__row">
           <span className="side-summary__label">Discount</span>

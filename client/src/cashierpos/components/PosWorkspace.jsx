@@ -50,10 +50,11 @@ export default function PosWorkspace() {
           </p>
           <button
             type="button"
-            className="standby__new"
+            className="standby__new standby__resume"
             onClick={resume}
             title="Resume the paused transaction"
           >
+            <span className="standby__key" aria-hidden="true">F12</span>
             ▶ Resume Transaction
           </button>
         </div>
@@ -89,10 +90,11 @@ export default function PosWorkspace() {
             )}
             <button
               type="button"
-              className="standby__new"
+              className="standby__new standby__start"
               onClick={newTransaction}
               title="Start a new sale"
             >
+              <span className="standby__key" aria-hidden="true">F11</span>
               + New Transaction
             </button>
           </div>

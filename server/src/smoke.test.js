@@ -71,6 +71,7 @@ test.after(() => {
 test('smoke: cashier to admin full workflow works from register open to approval review', async () => {
   const createProduct = await req('POST', '/products', {
     name: 'Smoke Vitamin',
+    brand: 'Smoke Labs',
     sku: 'SMOKE-001',
     barcode: 'SMOKE-001',
     productType: 'General Merchandise',
@@ -82,7 +83,7 @@ test('smoke: cashier to admin full workflow works from register open to approval
     pwdDiscountEligible: true,
   }, adminToken);
   assert.equal(createProduct.status, 201);
-  const productId = createProduct.data.product.id;
+  const productId = createProduct.data.id;
 
   const registerOpen = await req('POST', '/cashier-sessions', {
     terminal: 'POS-SMOKE',
@@ -100,7 +101,7 @@ test('smoke: cashier to admin full workflow works from register open to approval
     cashierSessionId: sessionId,
   }, cashierToken);
   assert.equal(sale.status, 201);
-  assert.ok(sale.data.sale.id);
+  assert.ok(sale.data.id);
 
   const held = await req('POST', '/pending-sales', {
     cashierSessionId: sessionId,
@@ -117,13 +118,13 @@ test('smoke: cashier to admin full workflow works from register open to approval
 
   const recalled = await req('PATCH', `/pending-sales/${heldId}/recall`, null, cashierToken);
   assert.equal(recalled.status, 200);
-  assert.equal(recalled.data.pendingSale.status, 'recalled');
+  assert.equal(recalled.data.pendingSale.status, 'in_progress');
 
   const approval = await req('POST', '/approvals', {
     type: 'override',
     title: 'Smoke approval request',
     reason: 'Manager review check',
-    details: { saleId: sale.data.sale.id, requestedDiscount: 10 },
+    details: { saleId: sale.data.id, requestedDiscount: 10 },
   }, cashierToken);
   assert.equal(approval.status, 201);
 

@@ -23,6 +23,8 @@ export default function Dialog({ title, header, onClose, children, footer, wide,
 
   useEffect(() => {
     function onKey(e) {
+      if (e.defaultPrevented) return;
+
       if (e.key === "Escape") {
         e.preventDefault();
         requestClose();

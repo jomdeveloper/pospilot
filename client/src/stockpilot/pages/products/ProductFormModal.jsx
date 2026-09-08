@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { AlertCircle, Baby, HeartPulse, Package, Pill, Scissors, ShoppingBasket, Sparkles, Stethoscope, X } from "lucide-react";
+import { AlertCircle, Baby, HeartPulse, LoaderCircle, Package, Pill, Scissors, ShoppingBasket, Sparkles, Stethoscope, X } from "lucide-react";
 import Button from "../../components/ui/Button";
 import { createProduct, getProductMetadata, updateProduct } from "../../api/products";
 
@@ -15,6 +15,7 @@ const initialForm = {
   productType: "",
   costPrice: "",
   price: "",
+  taxType: "VATABLE",
   stock: "",
   reorderLevel: "",
   maximumStock: "",
@@ -29,6 +30,14 @@ const initialForm = {
 };
 
 const DELIVERY_FIELDS = new Set(["Expiry date", "Storage condition", "Batch/lot number", "Serial number", "Warranty period"]);
+const PRODUCT_TABS = [
+  ["general", "General"],
+  ["image", "Image"],
+  ["specific", "Product-Specific"],
+  ["pricing", "Pricing"],
+  ["inventory", "Inventory"],
+  ["discounts", "Discounts"],
+];
 
 export default function ProductFormModal({ t, product, readOnly = false, authToken, onClose, onCreated }) {
   const [tab, setTab] = useState("general");
@@ -80,6 +89,7 @@ export default function ProductFormModal({ t, product, readOnly = false, authTok
       trackSerial: Boolean(product.trackSerial ?? product.track_serial),
       costPrice: String(product.costPrice ?? product.cost_price ?? ""),
       price: String(product.price ?? ""),
+      taxType: String(product.taxType || product.tax_type || "VATABLE").toUpperCase(),
       stock: String(product.stock ?? "0"),
       reorderLevel: String(product.reorderLevel ?? product.reorder_level ?? "0"),
       maximumStock: String(product.maximumStock ?? product.maximum_stock ?? ""),
@@ -208,11 +218,13 @@ export default function ProductFormModal({ t, product, readOnly = false, authTok
     setSaving(true);
     try {
       const payload = { ...form, brand, price, costPrice, stock: product ? undefined : stock, attributes, imageUrl: resolveImageUrl(form.category, form.imageUrl) };
-      if (product) {
-        await updateProduct(product.id, payload, authToken);
-      } else {
-        await createProduct(payload);
-      }
+      const saveRequest = product
+        ? updateProduct(product.id, payload, authToken)
+        : createProduct(payload);
+      await Promise.all([
+        saveRequest,
+        new Promise((resolve) => setTimeout(resolve, 1000)),
+      ]);
       onCreated?.();
       onClose();
     } catch (saveError) {
@@ -234,27 +246,32 @@ export default function ProductFormModal({ t, product, readOnly = false, authTok
   const checkbox = (name) => (
     <label key={name} className="flex items-center gap-2 text-sm" style={{ color: t.text }}>
       <input type="checkbox" name={name} checked={Boolean(form[name])} disabled={readOnly} onChange={(event) => setForm((current) => ({ ...current, [name]: event.target.checked }))} />
-      {name.replace(/([A-Z])/g, " $1")}
+      {name.replace(/([A-Z])/g, " $1").replace(/^./, (letter) => letter.toUpperCase())}
     </label>
   );
 
   const selectedType = productTypes.find((type) => type.name === form.productType);
   const availableTypes = productTypes.filter((type) => type.category_name === form.category);
   const isService = form.category === "Services";
+  const isFinalTab = tab === PRODUCT_TABS[PRODUCT_TABS.length - 1][0];
+  const goToNextTab = () => {
+    const currentIndex = PRODUCT_TABS.findIndex(([id]) => id === tab);
+    if (currentIndex < PRODUCT_TABS.length - 1) setTab(PRODUCT_TABS[currentIndex + 1][0]);
+  };
 
   return (
     <div className="product-modal fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(15,23,42,0.5)" }}>
-      <form onSubmit={handleSave} className="w-full max-w-2xl max-h-[calc(100vh-2rem)] rounded-2xl overflow-hidden flex flex-col" style={{ background: t.card }} onClick={(event) => event.stopPropagation()}>
+      <form onSubmit={(event) => event.preventDefault()} className="w-full max-w-2xl h-[min(720px,calc(100vh-2rem))] rounded-2xl overflow-hidden flex flex-col" style={{ background: t.card }} onClick={(event) => event.stopPropagation()}>
         <div className="flex items-center justify-between px-5 py-4" style={{ borderBottom: `1px solid ${t.border}` }}>
           <h3 className="font-bold" style={{ color: t.text }}>{readOnly ? "View Product" : product ? "Edit Product" : "Add New Product"}</h3>
           <button type="button" onClick={onClose} className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ color: t.sub, background: t.bg }}><X size={16} /></button>
         </div>
         <div className="product-modal-tabs flex gap-1 px-5 pt-3 overflow-x-auto" style={{ borderBottom: `1px solid ${t.border}` }}>
-          {[['general', 'General'], ['image', 'Image'], ['specific', 'Product-Specific'], ['pricing', 'Pricing'], ['inventory', 'Inventory'], ['discounts', 'Discounts']].map(([id, label]) => (
+          {PRODUCT_TABS.map(([id, label]) => (
             <button key={id} type="button" onClick={() => setTab(id)} className="px-3 py-2 text-xs font-semibold whitespace-nowrap rounded-t-lg -mb-px" style={{ color: tab === id ? t.primary : t.sub, borderBottom: tab === id ? `2px solid ${t.primary}` : "2px solid transparent" }}>{label}</button>
           ))}
         </div>
-        <div className="p-5 min-h-[280px] overflow-y-auto">
+        <div className="p-5 flex-1 min-h-0 overflow-y-auto">
           {tab === "image" && <div className="flex items-center gap-4 rounded-2xl p-3" style={{ background: t.bg, border: `1px solid ${t.border}` }}>
               {imagePreview ? <img src={imagePreview} alt="Product preview" className="h-20 w-20 rounded-xl object-cover" style={{ border: `1px solid ${t.border}` }} onError={() => setImagePreview("")} /> : (() => {
                 const DefaultIcon = categoryDefaultIcon(form.category || "General Merchandise");
@@ -284,14 +301,17 @@ export default function ProductFormModal({ t, product, readOnly = false, authTok
             <label className="block col-span-2"><span className="text-xs font-semibold mb-1 block" style={{ color: t.sub }}>Product Description</span><textarea name="description" value={form.description} onChange={update} disabled={readOnly} rows="3" placeholder="Optional product details" className="w-full px-3 py-2.5 rounded-xl text-sm outline-none resize-none" style={{ background: t.bg, color: t.text, border: `1px solid ${t.border}` }} /></label>
           </div>}
           {tab === "specific" && <div className="grid grid-cols-2 gap-4">{selectedType?.attributes?.filter((attribute) => !DELIVERY_FIELDS.has(attribute.name)).length ? selectedType.attributes.filter((attribute) => !DELIVERY_FIELDS.has(attribute.name)).map((attribute) => { const dataType = attribute.data_type || attribute.dataType || "text"; return <label key={attribute.id || attribute.name} className="block"><span className="text-xs font-semibold mb-1 block" style={{ color: t.sub }}>{attribute.name}{attribute.required ? " *" : ""}</span>{dataType === "boolean" ? <select required={Boolean(attribute.required)} disabled={readOnly} value={attributes[attribute.name] === true ? "yes" : attributes[attribute.name] === false ? "no" : ""} onChange={(event) => setAttributes((current) => ({ ...current, [attribute.name]: event.target.value === "yes" }))} className="w-full px-3 py-2.5 rounded-xl text-sm outline-none" style={{ background: t.bg, color: t.text, border: `1px solid ${t.border}` }}><option value="">Choose</option><option value="yes">Yes</option><option value="no">No</option></select> : <input required={Boolean(attribute.required)} disabled={readOnly} type={dataType === "number" ? "number" : dataType === "date" ? "date" : "text"} value={attributes[attribute.name] ?? ""} onChange={(event) => setAttributes((current) => ({ ...current, [attribute.name]: event.target.value }))} className="w-full px-3 py-2.5 rounded-xl text-sm outline-none" style={{ background: t.bg, color: t.text, border: `1px solid ${t.border}` }} />}</label>; }) : <p className="col-span-2 text-sm" style={{ color: t.sub }}>No product fields are configured for this subcategory. Delivery fields are entered during receiving.</p>}</div>}
-          {tab === "pricing" && <div className="grid grid-cols-2 gap-4">{input("Cost Price", "costPrice", "number", true)}{input("Selling Price", "price", "number", true)}</div>}
+          {tab === "pricing" && <div className="grid grid-cols-2 gap-4">{input("Cost Price", "costPrice", "number", true)}<div>{input("Selling Price", "price", "number", true)}<label className="block mt-4"><span className="text-xs font-semibold mb-1 block" style={{ color: t.sub }}>Tax Treatment *</span><select name="taxType" value={form.taxType} onChange={update} required disabled={readOnly} className="w-full px-3 py-2.5 rounded-xl text-sm outline-none" style={{ background: t.bg, color: t.text, border: `1px solid ${t.border}` }}><option value="VATABLE">VATable (12%)</option><option value="EXEMPT">VAT-Exempt</option><option value="ZERO_RATED">Zero-Rated (0%)</option><option value="NON_VAT">Non-VAT</option></select></label></div></div>}
           {tab === "inventory" && (isService ? <p className="text-sm" style={{ color: t.sub }}>Services do not use inventory, batch, expiry, or serial tracking.</p> : <div className="grid grid-cols-2 gap-4">{product ? <label className="block"><span className="text-xs font-semibold mb-1 block" style={{ color: t.sub }}>Current Stock</span><input value={form.stock} readOnly className="w-full px-3 py-2.5 rounded-xl text-sm outline-none" style={{ background: t.bg, color: t.sub, border: `1px solid ${t.border}` }} /><span className="text-[11px] mt-1 block" style={{ color: t.primary }}>Use Receiving or Stock Adjustment to change inventory.</span></label> : input("Opening Stock", "stock", "number", false)}{input("Reorder Level", "reorderLevel", "number", false)}{input("Maximum Stock", "maximumStock", "number", false)}<div className="col-span-2 border-t pt-4 mt-1" style={{ borderColor: t.border }}><div className="text-xs font-bold uppercase tracking-wide mb-3" style={{ color: t.text }}>Product Tracking</div><div className="flex flex-wrap items-center gap-x-5 gap-y-3">{checkbox("trackInventory")}{checkbox("trackBatch")}{checkbox("trackExpiry")}{checkbox("trackSerial")}</div><p className="text-[11px] mt-3" style={{ color: t.sub }}>Configure how this product is tracked during receiving and sales.</p></div></div>)}
           {tab === "discounts" && <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">{checkbox("seniorDiscountEligible")}{checkbox("pwdDiscountEligible")}{checkbox("promoEligible")}{checkbox("loyaltyEligible")}</div>}
           {error && <div className="col-span-2 mt-3 flex items-start gap-2 rounded-xl px-3 py-2.5 text-sm" style={{ background: t.dangerSoft, border: `1px solid ${t.danger}`, color: t.danger }} role="alert"><AlertCircle size={16} className="mt-0.5 shrink-0" /><span>{error}</span></div>}
         </div>
-        <div className="flex items-center justify-end gap-2 px-5 py-4" style={{ borderTop: `1px solid ${t.border}` }}>
-          <Button t={t} type="button" variant="outline" onClick={onClose}>{readOnly ? "Close" : "Cancel"}</Button>
-          {!readOnly && <Button t={t} type="submit" disabled={saving}>{saving ? "Saving..." : product ? "Update Product" : "Save Product"}</Button>}
+        <div className="flex items-center justify-between gap-2 px-5 py-4 shrink-0" style={{ borderTop: `1px solid ${t.border}` }}>
+          <Button t={t} type="button" variant="outline" onClick={onClose} className="w-36 justify-center whitespace-nowrap">{readOnly ? "Close" : "Cancel"}</Button>
+          {!readOnly && <div className="flex items-center gap-2">
+            <Button t={t} type="button" variant="outline" onClick={() => setTab(PRODUCT_TABS[Math.max(0, PRODUCT_TABS.findIndex(([id]) => id === tab) - 1)][0])} disabled={tab === PRODUCT_TABS[0][0] || saving} className="w-36 justify-center whitespace-nowrap">Back</Button>
+            <Button t={t} type="button" onClick={isFinalTab ? handleSave : goToNextTab} disabled={saving} className="w-36 justify-center whitespace-nowrap">{isFinalTab ? (saving ? <><LoaderCircle size={15} className="animate-spin" style={{ animationDuration: "1.8s" }} aria-hidden="true" /> Saving...</> : product ? "Update Product" : "Save Product") : "Next"}</Button>
+          </div>}
         </div>
       </form>
     </div>

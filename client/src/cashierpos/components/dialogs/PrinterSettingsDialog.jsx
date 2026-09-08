@@ -22,7 +22,7 @@ export default function PrinterSettingsDialog() {
     lanPort: 9100,
     baud: 9600,
     peso: "p",
-    width: 32,
+    width: 42,
     cut: true,
     feedLines: 3,
     fallback: true
@@ -98,7 +98,7 @@ export default function PrinterSettingsDialog() {
       RECEIPT_ESCPOS_ADDRESS: m === "lan" ? form.lanIp : m === "com" ? form.devicePort : "",
       RECEIPT_ESCPOS_PORT: Number(form.lanPort) || 9100,
       RECEIPT_ESCPOS_PRINTER_NAME: m === "driver" ? form.driverPrinter : "",
-      RECEIPT_ESCPOS_WIDTH: Number(form.width) || 32,
+      RECEIPT_ESCPOS_WIDTH: Number(form.width) || 42,
       RECEIPT_ESCPOS_CUT: form.cut,
       RECEIPT_ESCPOS_FEED: Number(form.feedLines) || 3,
       RECEIPT_ESCPOS_BAUD: Number(form.baud) || 9600,
@@ -295,9 +295,9 @@ export default function PrinterSettingsDialog() {
         <div className="form-row">
           <label htmlFor="cfg-width">Characters per line</label>
           <select id="cfg-width" value={form.width} onChange={setNum("width")}>
-            <option value={32}>58mm — 32 chars</option>
-            <option value={42}>80mm — 42 chars</option>
-            <option value={48}>80mm — 48 chars</option>
+            <option value={32}>58mm — Font A — 32 chars</option>
+            <option value={42}>58mm — Font B — 42 chars (default)</option>
+            <option value={48}>80mm — Font B — 48 chars</option>
           </select>
         </div>
 

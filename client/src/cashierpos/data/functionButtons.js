@@ -21,12 +21,13 @@
  * The BOTTOM panel is the single F-key row: F1..F3, F5..F7, DEL (Remove
  * Item) then F10 (More Actions). Secondary actions that used to live on
  * the right column (Keyboard, About/Help, Cancel Transaction) and the row
- * (F4 Discount) are exposed through the "More" pop-dialog instead.
+ * (F6 Hold) and (F7 Recall) remain available through the function row.
  */
 export const BOTTOM_FUNCTION_BUTTONS = [
   { key: "F2",  name: "Search",          icon: "tag",     action: "productSearch" },
   { key: "F3",  name: "Quantity",        icon: "qty",     action: "quantity" },
-  { key: "F5",  name: "Price Check",     icon: "tag",     action: "priceCheck" },
+  { key: "F4",  name: "Customer",        icon: "user",    action: "customer" },
+  { key: "F5",  name: "Discount",        icon: "percent", action: "discount" },
   { key: "F6",  name: "Hold",            icon: "hold",    action: "hold" },
   { key: "F7",  name: "Recall",          icon: "recall",  action: "recall" },
   { key: "DEL", name: "Remove",          icon: "void",    action: "void", danger: true },

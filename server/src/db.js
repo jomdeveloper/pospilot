@@ -30,6 +30,7 @@ db.exec(`
     status TEXT NOT NULL DEFAULT 'Active',
     image_url TEXT,
     price REAL NOT NULL,
+    tax_type TEXT NOT NULL DEFAULT 'VATABLE' CHECK (tax_type IN ('VATABLE', 'VAT_EXEMPT', 'EXEMPT', 'ZERO_RATED', 'NON_VAT')),
     cost_price REAL NOT NULL DEFAULT 0,
     stock INTEGER NOT NULL DEFAULT 0,
     track_inventory INTEGER NOT NULL DEFAULT 1,
@@ -115,15 +116,29 @@ db.exec(`
     created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
     status TEXT NOT NULL DEFAULT 'COMPLETED',
     customer TEXT NOT NULL DEFAULT 'Walk-in Customer',
+    customer_type TEXT NOT NULL DEFAULT 'walkin',
     member_id TEXT,
+    discount_type TEXT NOT NULL DEFAULT 'NONE' CHECK (discount_type IN ('NONE', 'MEMBER', 'SENIOR_CITIZEN', 'PWD', 'OTHER')),
     subtotal REAL NOT NULL,
     discount_total REAL NOT NULL,
     vat REAL NOT NULL,
+    vatable_sales REAL NOT NULL DEFAULT 0,
+    vat_exempt_sales REAL NOT NULL DEFAULT 0,
+    zero_rated_sales REAL NOT NULL DEFAULT 0,
+    non_vat_sales REAL NOT NULL DEFAULT 0,
     grand_total REAL NOT NULL,
     cash_received REAL NOT NULL,
     change_due REAL NOT NULL,
-    payment_type TEXT NOT NULL
+    payment_type TEXT NOT NULL,
+    cashier_session_id INTEGER REFERENCES cashier_sessions(id),
+    cashier_user_id INTEGER REFERENCES users(id),
+    cashier_username TEXT,
+    cash_amount REAL NOT NULL DEFAULT 0,
+    split_payments_json TEXT
   );
+
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_sales_transaction_ref
+    ON sales(transaction_ref) WHERE transaction_ref IS NOT NULL AND transaction_ref != '';
 
   CREATE TABLE IF NOT EXISTS sale_items (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -134,7 +149,16 @@ db.exec(`
     price REAL NOT NULL,
     disc_pct REAL NOT NULL DEFAULT 0,
     discount REAL NOT NULL DEFAULT 0,
-    total REAL NOT NULL
+    total REAL NOT NULL,
+    tax_type TEXT NOT NULL DEFAULT 'VATABLE',
+    discount_type TEXT NOT NULL DEFAULT 'NONE' CHECK (discount_type IN ('NONE', 'MEMBER', 'SENIOR_CITIZEN', 'PWD', 'OTHER')),
+    vat REAL NOT NULL DEFAULT 0,
+    vatable_sales REAL NOT NULL DEFAULT 0,
+    vat_exempt_sales REAL NOT NULL DEFAULT 0,
+    zero_rated_sales REAL NOT NULL DEFAULT 0,
+    non_vat_sales REAL NOT NULL DEFAULT 0,
+    customer_discount REAL NOT NULL DEFAULT 0,
+    returned_qty INTEGER NOT NULL DEFAULT 0
   );
 
   CREATE TABLE IF NOT EXISTS sale_returns (
@@ -217,7 +241,8 @@ db.exec(`
     name TEXT NOT NULL,
     qty INTEGER NOT NULL,
     unit_cost REAL NOT NULL,
-    total REAL NOT NULL
+    total REAL NOT NULL,
+    received_qty INTEGER NOT NULL DEFAULT 0
   );
 
   CREATE TABLE IF NOT EXISTS categories (
@@ -261,12 +286,22 @@ db.exec(`
     actor_username TEXT NOT NULL DEFAULT 'system',
     actor_role TEXT NOT NULL DEFAULT 'System',
     action TEXT NOT NULL,
+    category TEXT NOT NULL DEFAULT 'System',
     entity_type TEXT NOT NULL,
     entity_id TEXT,
     details_json TEXT NOT NULL DEFAULT '{}',
     outcome TEXT NOT NULL DEFAULT 'Success',
+    terminal TEXT,
+    request_id TEXT,
+    ip_address TEXT,
+    user_agent TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
   );
+
+  CREATE INDEX IF NOT EXISTS idx_audit_logs_created ON audit_logs(created_at DESC, id DESC);
+  CREATE INDEX IF NOT EXISTS idx_audit_logs_actor ON audit_logs(actor_user_id, created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_audit_logs_action ON audit_logs(action, created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_audit_logs_entity ON audit_logs(entity_type, entity_id, created_at DESC);
 
   /* ------------------------------------------------------------------ */
   /*  Cash Float / Opening Cash — per cashier register sessions.         */
@@ -327,6 +362,8 @@ db.exec(`
     terminal TEXT NOT NULL DEFAULT 'POS-02',
     cashier_user_id INTEGER NOT NULL,
     cashier_username TEXT NOT NULL,
+    actor_user_id INTEGER,
+    actor_username TEXT,
     transaction_type TEXT NOT NULL CHECK (transaction_type IN (
       'opening_float', 'cash_in', 'cash_out', 'cash_drop', 'adjustment_in', 'adjustment_out', 'actual_cash'
     )),
@@ -341,17 +378,50 @@ db.exec(`
     ON cash_transactions(cashier_session_id);
   CREATE INDEX IF NOT EXISTS idx_cash_transactions_created
     ON cash_transactions(created_at);
+
+  CREATE TABLE IF NOT EXISTS register_cashier_activity (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    cashier_session_id INTEGER NOT NULL REFERENCES cashier_sessions(id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    username TEXT NOT NULL,
+    started_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+    ended_at TEXT,
+    status TEXT NOT NULL DEFAULT 'Active' CHECK (status IN ('Active', 'Ended'))
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_register_activity_session
+    ON register_cashier_activity(cashier_session_id, started_at);
+  CREATE INDEX IF NOT EXISTS idx_register_activity_user
+    ON register_cashier_activity(user_id, status);
 `);
 
-const salesColumns = new Set(db.prepare('PRAGMA table_info(sales)').all().map((column) => column.name));
-if (!salesColumns.has('transaction_ref')) db.exec('ALTER TABLE sales ADD COLUMN transaction_ref TEXT');
-if (!salesColumns.has('status')) db.exec("ALTER TABLE sales ADD COLUMN status TEXT NOT NULL DEFAULT 'COMPLETED'");
-// Cash-drawer integration: every sale can be attributed to an open cashier
-// session and carries the exact portion of the tender that physically lands
-// in the drawer (0 for card/e-wallet/bank; the cash leg only for split tenders).
-if (!salesColumns.has('cashier_session_id')) db.exec('ALTER TABLE sales ADD COLUMN cashier_session_id INTEGER REFERENCES cashier_sessions(id)');
-if (!salesColumns.has('cash_amount')) db.exec("ALTER TABLE sales ADD COLUMN cash_amount REAL NOT NULL DEFAULT 0");
-if (!salesColumns.has('split_payments_json')) db.exec('ALTER TABLE sales ADD COLUMN split_payments_json TEXT');
+// Additive audit migrations for databases created before structured audit
+// metadata was introduced.
+const auditColumns = new Set(db.prepare('PRAGMA table_info(audit_logs)').all().map((column) => column.name));
+const addAuditColumn = (name, definition) => {
+  if (!auditColumns.has(name)) db.exec(`ALTER TABLE audit_logs ADD COLUMN ${name} ${definition}`);
+};
+addAuditColumn('category', "TEXT NOT NULL DEFAULT 'System'");
+addAuditColumn('terminal', 'TEXT');
+addAuditColumn('request_id', 'TEXT');
+addAuditColumn('ip_address', 'TEXT');
+addAuditColumn('user_agent', 'TEXT');
+db.exec('CREATE INDEX IF NOT EXISTS idx_audit_logs_created ON audit_logs(created_at DESC, id DESC)');
+db.exec('CREATE INDEX IF NOT EXISTS idx_audit_logs_actor ON audit_logs(actor_user_id, created_at DESC)');
+db.exec('CREATE INDEX IF NOT EXISTS idx_audit_logs_action ON audit_logs(action, created_at DESC)');
+db.exec('CREATE INDEX IF NOT EXISTS idx_audit_logs_entity ON audit_logs(entity_type, entity_id, created_at DESC)');
+
+// Additive migrations for databases created before cashier attribution was
+// introduced. SQLite has no IF NOT EXISTS form for ALTER TABLE ADD COLUMN.
+const columns = (table) => new Set(db.prepare(`PRAGMA table_info(${table})`).all().map((column) => column.name));
+const addColumn = (table, name, definition) => {
+  if (!columns(table).has(name)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${definition}`);
+};
+addColumn('sales', 'cashier_user_id', 'INTEGER REFERENCES users(id)');
+addColumn('sales', 'cashier_username', 'TEXT');
+addColumn('cash_transactions', 'actor_user_id', 'INTEGER');
+addColumn('cash_transactions', 'actor_username', 'TEXT');
+
 db.exec('CREATE INDEX IF NOT EXISTS idx_sales_cashier_session ON sales(cashier_session_id)');
 
 db.exec(`
@@ -365,7 +435,7 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS inventory_location_stock (
     location_id INTEGER NOT NULL REFERENCES inventory_locations(id) ON DELETE CASCADE,
     product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
-    quantity INTEGER NOT NULL DEFAULT 0 CHECK (quantity >= 0),
+    quantity INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (location_id, product_id)
   );
 
@@ -416,62 +486,10 @@ db.exec(`
   );
 `);
 
-const pendingSalesSchema = db
-  .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'pending_sales'")
-  .get();
-if (pendingSalesSchema && !/in_progress/.test(pendingSalesSchema.sql || '') && !/cancelled/.test(pendingSalesSchema.sql || '')) {
-  db.transaction(() => {
-    db.exec(`
-      ALTER TABLE pending_sales RENAME TO pending_sales_old;
-      CREATE TABLE pending_sales (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        cashier_session_id INTEGER REFERENCES cashier_sessions(id),
-        customer_name TEXT NOT NULL DEFAULT 'Walk-in Customer',
-        customer_type TEXT NOT NULL DEFAULT 'walkin',
-        member_id TEXT,
-        payload_json TEXT NOT NULL DEFAULT '{}',
-        status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'in_progress', 'recalled', 'completed', 'cancelled')),
-        created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
-        recalled_at TEXT,
-        recalled_by_user_id INTEGER,
-        recalled_by_username TEXT
-      );
-      INSERT INTO pending_sales (id, cashier_session_id, customer_name, customer_type, member_id, payload_json, status, created_at, recalled_at, recalled_by_user_id, recalled_by_username)
-        SELECT id, cashier_session_id, customer_name, customer_type, member_id, payload_json, status, created_at, recalled_at, recalled_by_user_id, recalled_by_username
-        FROM pending_sales_old;
-      DROP TABLE pending_sales_old;
-    `);
-  })();
-}
-
 db.exec('CREATE INDEX IF NOT EXISTS idx_approval_requests_status ON approval_requests(status, created_at DESC)');
 db.exec('CREATE INDEX IF NOT EXISTS idx_pending_sales_status ON pending_sales(status, created_at DESC)');
 
-// The POS may sell down past zero (cashier sells what is physically present,
-// then staff reconcile via Stock Adjustment). Remove the old
-// CHECK (quantity >= 0) on inventory_location_stock so location stock can go
-// negative. SQLite requires recreating the table to drop a CHECK.
-const locationStockSchema = db
-  .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'inventory_location_stock'")
-  .get();
-if (locationStockSchema && /CHECK\s*\(\s*quantity\s*>=\s*0\s*\)/i.test(locationStockSchema.sql || '')) {
-  db.transaction(() => {
-    db.exec(`
-      ALTER TABLE inventory_location_stock RENAME TO inventory_location_stock_old;
-      CREATE TABLE inventory_location_stock (
-        location_id INTEGER NOT NULL REFERENCES inventory_locations(id) ON DELETE CASCADE,
-        product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
-        quantity INTEGER NOT NULL DEFAULT 0,
-        PRIMARY KEY (location_id, product_id)
-      );
-      INSERT INTO inventory_location_stock (location_id, product_id, quantity)
-        SELECT location_id, product_id, quantity FROM inventory_location_stock_old;
-      DROP TABLE inventory_location_stock_old;
-    `);
-  })();
-}
-
-const mainLocation = db.prepare("INSERT OR IGNORE INTO inventory_locations (name) VALUES ('Main Store')").run();
+db.prepare("INSERT OR IGNORE INTO inventory_locations (name) VALUES ('Main Store')").run();
 const mainLocationId = db.prepare("SELECT id FROM inventory_locations WHERE name = 'Main Store'").get().id;
 db.prepare(`
   INSERT OR IGNORE INTO inventory_location_stock (location_id, product_id, quantity)
@@ -497,73 +515,17 @@ db.prepare('INSERT OR IGNORE INTO product_types (name, category_name, descriptio
   'Service offerings and labor'
 );
 
-const productColumns = new Set(db.prepare('PRAGMA table_info(products)').all().map((column) => column.name));
-[
-  ['description', 'TEXT'],
-].forEach(([column, definition]) => {
-  if (!productColumns.has(column)) db.exec(`ALTER TABLE products ADD COLUMN ${column} ${definition}`);
-});
-const saleItemColumns = new Set(db.prepare('PRAGMA table_info(sale_items)').all().map((column) => column.name));
-if (!saleItemColumns.has('returned_qty')) db.exec('ALTER TABLE sale_items ADD COLUMN returned_qty INTEGER NOT NULL DEFAULT 0');
-const saleReturnColumns = new Set(db.prepare('PRAGMA table_info(sale_returns)').all().map((column) => column.name));
-if (!saleReturnColumns.has('refund_method')) db.exec("ALTER TABLE sale_returns ADD COLUMN refund_method TEXT NOT NULL DEFAULT 'cash'");
-if (!saleReturnColumns.has('approved_by_user_id')) db.exec('ALTER TABLE sale_returns ADD COLUMN approved_by_user_id INTEGER');
-if (!saleReturnColumns.has('approved_by_username')) db.exec('ALTER TABLE sale_returns ADD COLUMN approved_by_username TEXT');
-db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_sale_voids_sale ON sale_voids(sale_id)');
-const batchColumns = new Set(db.prepare('PRAGMA table_info(inventory_batches)').all().map((column) => column.name));
-[
-  ['storage_condition', 'TEXT'],
-  ['warranty_period', 'REAL'],
-  ['attributes_json', "TEXT NOT NULL DEFAULT '{}'"],
-].forEach(([column, definition]) => {
-  if (!batchColumns.has(column)) db.exec(`ALTER TABLE inventory_batches ADD COLUMN ${column} ${definition}`);
-});
-const purchaseItemColumns = new Set(db.prepare('PRAGMA table_info(purchase_order_items)').all().map((column) => column.name));
-if (!purchaseItemColumns.has('received_qty')) db.exec('ALTER TABLE purchase_order_items ADD COLUMN received_qty INTEGER NOT NULL DEFAULT 0');
-['is_rx', 'is_controlled', 'ra6675_compliant', 'requires_prescription'].forEach((column) => {
-  if (productColumns.has(column)) db.exec(`ALTER TABLE products DROP COLUMN ${column}`);
-});
-
 // Force a one-time password change for accounts that still use the seeded
 // default credentials. New columns default to 0; the accounts created below
 // during bootstrap are explicitly marked 1, and any pre-existing database that
 // still carries the default hash gets upgraded here so old installs are just as
 // strict as fresh ones.
-const userColumns = new Set(db.prepare('PRAGMA table_info(users)').all().map((column) => column.name));
-if (!userColumns.has('must_change_password')) {
-  db.exec('ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0');
-}
 db.prepare(
   "UPDATE users SET must_change_password = 1 WHERE username = 'admin' AND password_hash = ? AND must_change_password = 0"
 ).run(hashPassword('admin123', 'admin'));
 db.prepare(
   "UPDATE users SET must_change_password = 1 WHERE username = 'cashier' AND password_hash = ? AND must_change_password = 0"
 ).run(hashPassword('cashier123', 'cashier'));
-
-// Enforce unique transaction references (POS invoice numbers). Older builds let the
-// invoice counter reset on restart, which could mint duplicate SI-###### refs —
-// backfill any duplicates with a `-<id>` suffix, then lock the column with a partial
-// UNIQUE index so duplicate invoice numbers can never be recorded again.
-if (db.prepare("SELECT COUNT(*) AS c FROM sqlite_master WHERE type = 'index' AND name = 'idx_sales_transaction_ref'").get().c === 0) {
-  db.transaction(() => {
-    const duplicates = db.prepare(`
-      SELECT transaction_ref, COUNT(*) AS c, MIN(id) AS keep_id
-      FROM sales
-      WHERE transaction_ref IS NOT NULL AND transaction_ref != ''
-      GROUP BY transaction_ref HAVING COUNT(*) > 1
-    `).all();
-    const dedupe = db.prepare("UPDATE sales SET transaction_ref = ? WHERE id = ?");
-    duplicates.forEach((dup) => {
-      const extras = db.prepare(
-        "SELECT id FROM sales WHERE transaction_ref = ? AND id != ? ORDER BY id"
-      ).all(dup.transaction_ref, dup.keep_id);
-      extras.forEach((row) => dedupe.run(`${dup.transaction_ref}-${row.id}`, row.id));
-    });
-  })();
-  db.exec(
-    "CREATE UNIQUE INDEX IF NOT EXISTS idx_sales_transaction_ref ON sales(transaction_ref) WHERE transaction_ref IS NOT NULL AND transaction_ref != ''"
-  );
-}
 
 if (db.prepare('SELECT COUNT(*) AS count FROM users').get().count === 0) {
   const insertUser = db.prepare(`

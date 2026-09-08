@@ -1,6 +1,7 @@
 const path = require('path');
 const fs = require('fs');
 const https = require('https');
+const crypto = require('crypto');
 const express = require('express');
 const cors = require('cors');
 
@@ -25,6 +26,7 @@ const { securityHeaders } = require('./security');
 const db = require('./db');
 const logger = require('./logger');
 const { cleanupSessions } = require('./routes/auth');
+const { auditSystemEvent } = require('./audit');
 const serverPackage = require('../package.json');
 
 // Default to loopback-only so the API is never exposed to the rest of the LAN
@@ -59,6 +61,21 @@ function createServer() {
     }));
   app.use(express.json({ limit: '10mb' }));
   app.use(securityHeaders());
+  app.use((req, res, next) => {
+    req.requestId = String(req.headers['x-request-id'] || '').trim() || crypto.randomUUID();
+    res.setHeader('X-Request-ID', req.requestId);
+    res.on('finish', () => {
+      if (res.statusCode >= 400 && !req.systemErrorAudited) {
+        auditSystemEvent(req, 'System request failed', 'SystemError', {
+          requestId: req.requestId,
+          method: req.method,
+          path: req.path,
+          statusCode: res.statusCode,
+        }, res.statusCode >= 500 ? 'Failed' : 'Rejected');
+      }
+    });
+    next();
+  });
 
   app.get('/api/health', (req, res) => {
     try {
@@ -103,6 +120,14 @@ function createServer() {
   app.use((error, req, res, next) => {
     if (res.headersSent) return next(error);
     logger.error('server', 'Unhandled server error', { error: (error && error.message) || String(error) });
+    auditSystemEvent(req, 'Unhandled server error', 'SystemError', {
+      requestId: req?.requestId,
+      method: req?.method,
+      path: req?.path,
+      errorName: error?.name || 'Error',
+      errorMessage: error?.message || String(error),
+    }, 'Failed');
+    req.systemErrorAudited = true;
     res.status(500).json({ error: 'Internal server error' });
   });
 
@@ -172,10 +197,15 @@ function start(port = PORT) {
 if (require.main === module) {
   process.on('uncaughtException', (error) => {
     logger.error('server', 'Uncaught exception', { error: (error && error.stack) || String(error) });
+    auditSystemEvent(null, 'Uncaught server exception', 'SystemError', {
+      errorName: error?.name || 'Error',
+      errorMessage: error?.message || String(error),
+    }, 'Failed');
     process.exit(1);
   });
   process.on('unhandledRejection', (reason) => {
     logger.error('server', 'Unhandled rejection', { reason: String(reason) });
+    auditSystemEvent(null, 'Unhandled promise rejection', 'SystemError', { reason: String(reason) }, 'Failed');
   });
 
   start()
@@ -185,6 +215,10 @@ if (require.main === module) {
     })
     .catch((error) => {
       logger.error('server', 'Failed to start PosPilot server', { error: (error && error.message) || String(error) });
+      auditSystemEvent(null, 'Server startup failed', 'SystemError', {
+        errorName: error?.name || 'Error',
+        errorMessage: error?.message || String(error),
+      }, 'Failed');
       process.exit(1);
     });
 }

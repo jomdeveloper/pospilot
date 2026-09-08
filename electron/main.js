@@ -313,30 +313,65 @@ async function findReceiptPrinter(win) {
   }
 }
 
+function escapeHtml(value) {
+  return String(value == null ? '' : value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function receiptHtml(lines, charsPerLine = 32) {
+  const width = 42;
+  const body = (Array.isArray(lines) ? lines : []).map((line) => {
+    const align = line && line.align === 'center' ? 'center' : line && line.align === 'right' ? 'right' : 'left';
+    const bold = line && line.bold ? ' font-weight:700;' : '';
+    return `<div style="text-align:${align};${bold}">${escapeHtml(line && line.text)}</div>`;
+  }).join('');
+  return `<!doctype html><html><head><meta charset="utf-8"><style>
+    @page { size: 58mm auto; margin: 0; }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; width: 58mm; background: #fff; }
+    body { padding: 0; color: #000; font-family: Consolas, "Courier New", monospace; font-size: ${width >= 40 ? '6pt' : '6.5pt'}; line-height: 1.15; white-space: pre; overflow: visible; }
+    body, div { width: 100%; }
+    div { min-height: 1.2em; overflow: visible; }
+  </style></head><body>${body}</body></html>`;
+}
+
 /**
- * Print the receipt to the detected thermal printer via webContents.print().
- * By default it shows the OS print dialog pre-selected to a detected receipt
- * printer (reliable path); set RECEIPT_AUTO_PRINT=1 for true silent printing.
+ * Print a rendered receipt through the selected Windows printer driver.
+ * The live POS window must not be printed: it is a full application page, not
+ * receipt content, and Chromium would scale it down to fit the receipt width.
  */
-async function printReceiptToPrinter(win, contentHeightMicrons, forcedDeviceName) {
+async function printReceiptToPrinter(win, lines, contentHeightMicrons, forcedDeviceName, cfgWidth) {
   let deviceName = null;
+  let receiptWindow = null;
   try {
     deviceName = forcedDeviceName && forcedDeviceName.trim()
       ? forcedDeviceName
       : await findReceiptPrinter(win);
 
+    receiptWindow = new BrowserWindow({
+      show: false,
+      width: 420,
+      height: 900,
+      webPreferences: { sandbox: true }
+    });
+    await receiptWindow.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(receiptHtml(lines, cfgWidth)));
+
     const heightMicrons =
-      Number(contentHeightMicrons) >= 10000 ? Number(contentHeightMicrons) : 120000;
+      Number(contentHeightMicrons) >= 10000 ? Number(contentHeightMicrons) : Math.max(80000, (Array.isArray(lines) ? lines.length : 0) * 5500);
     const silent = !!(process.env.RECEIPT_AUTO_PRINT && deviceName);
 
     const result = await new Promise((resolve) => {
-      win.webContents.print(
+      receiptWindow.webContents.print(
         {
           silent,
           printBackground: true,
           deviceName: deviceName || '',
           margins: { marginType: 'none' },
-          pageSize: { width: 45000, height: heightMicrons }
+          pageSize: { width: 58000, height: heightMicrons }
         },
         (success, failureReason) => resolve({ success, failureReason })
       );
@@ -344,6 +379,8 @@ async function printReceiptToPrinter(win, contentHeightMicrons, forcedDeviceName
     return { ok: !!result.success, deviceName, error: result.failureReason };
   } catch (e) {
     return { ok: false, deviceName, error: String((e && e.message) || e) };
+  } finally {
+    if (receiptWindow && !receiptWindow.isDestroyed()) receiptWindow.destroy();
   }
 }
 
@@ -362,7 +399,7 @@ async function printReceiptFlow(win, payload) {
   const rawPossible = expos.isConfigured(cfg);
   const dialogName = expos.deviceNameForDialog(cfg);
 
-  const raster = async (deviceName) => printReceiptToPrinter(win, heightMicrons, deviceName);
+  const raster = async (deviceName) => printReceiptToPrinter(win, lines, heightMicrons, deviceName, cfg.width);
 
   if (method === 'dialog') {
     if (!dialogName) {

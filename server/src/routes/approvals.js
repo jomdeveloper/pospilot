@@ -26,7 +26,7 @@ function serializeApproval(row) {
   };
 }
 
-router.get('/', authenticate, (req, res) => {
+router.get('/', managerOrAbove, (req, res) => {
   const rows = db.prepare(`
     SELECT * FROM approval_requests
     ORDER BY created_at DESC, id DESC

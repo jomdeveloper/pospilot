@@ -92,6 +92,21 @@ test('change-password validates its input', async () => {
   assert.equal(same.status, 400);
 });
 
+test('cashiers cannot access management settings, users, or approval queues', async () => {
+  const login = await req('POST', '/auth/login', { username: 'cashier', password: 'South#R1dge' });
+  assert.equal(login.status, 200);
+  const cashierToken = login.data.token;
+
+  const settings = await req('PUT', '/settings', { terminalName: 'UNAUTHORIZED' }, cashierToken);
+  assert.equal(settings.status, 403);
+
+  const users = await req('GET', '/users', null, cashierToken);
+  assert.equal(users.status, 403);
+
+  const approvals = await req('GET', '/approvals', null, cashierToken);
+  assert.equal(approvals.status, 403);
+});
+
 test('catalog metadata and categories are protected by authentication', async () => {
   const anonMeta = await req('GET', '/products/metadata');
   assert.equal(anonMeta.status, 401);

@@ -1,9 +1,11 @@
 const express = require('express');
 const crypto = require('crypto');
 const { authenticate } = require('./auth');
+const { auditLog } = require('../audit');
 
 const router = express.Router();
 const pairings = new Map();
+const PHONE_HEARTBEAT_TIMEOUT_MS = 10000;
 
 function tokenHash(token) {
   return crypto.createHash('sha256').update(token).digest('hex');
@@ -28,10 +30,12 @@ router.post('/pairing', authenticate, (req, res) => {
     key,
     cashierTokenHash: tokenHash(req.token),
     phoneTokenHash: null,
+    lastSeenAt: null,
     nextScanId: 1,
     latestScan: null,
   };
   pairings.set(String(req.session.userId), pairing);
+  auditLog(req, 'Created barcode scanner pairing', 'BarcodeScanner', req.session.userId, { cashierUserId: req.session.userId });
   res.status(201).json({ key, connected: false });
 });
 
@@ -46,13 +50,28 @@ router.post('/connect', (req, res) => {
     return res.status(409).json({ error: 'This cashier already has a scanner connected' });
   }
   pairing.phoneTokenHash = phoneTokenHash;
+  pairing.lastSeenAt = Date.now();
+  auditLog(req, 'Connected barcode scanner', 'BarcodeScanner', pairing.key, { cashierUserId: [...pairings.entries()].find(([, value]) => value === pairing)?.[0] || null });
   res.json({ connected: true, phoneToken });
+});
+
+router.post('/heartbeat', (req, res) => {
+  const phoneToken = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+  const pairing = phoneToken ? [...pairings.values()].find((candidate) => candidate.phoneTokenHash === tokenHash(phoneToken)) : null;
+  if (!pairing) return res.status(403).json({ error: 'Connect this scanner to a cashier first' });
+  pairing.lastSeenAt = Date.now();
+  res.json({ ok: true });
 });
 
 router.get('/status', authenticate, (req, res) => {
   if (!requireCashier(req, res)) return;
   const pairing = getPairingForCashier(req.session.userId);
-  res.json({ key: pairing?.key || null, connected: Boolean(pairing?.phoneTokenHash) });
+  const connected = Boolean(
+    pairing?.phoneTokenHash &&
+    pairing.lastSeenAt &&
+    Date.now() - pairing.lastSeenAt <= PHONE_HEARTBEAT_TIMEOUT_MS
+  );
+  res.json({ key: pairing?.key || null, connected });
 });
 
 router.post('/', (req, res) => {
@@ -67,6 +86,8 @@ router.post('/', (req, res) => {
     barcode,
     createdAt: new Date().toISOString(),
   };
+  pairing.lastSeenAt = Date.now();
+  auditLog(req, 'Scanned barcode', 'BarcodeScan', pairing.latestScan.id, { barcode, cashierUserId: [...pairings.entries()].find(([, value]) => value === pairing)?.[0] || null });
   res.status(201).json(pairing.latestScan);
 });
 
@@ -74,7 +95,8 @@ router.get('/latest', authenticate, (req, res) => {
   if (!requireCashier(req, res)) return;
   const pairing = getPairingForCashier(req.session.userId);
   const after = Number(req.query.after || 0);
-  res.json(pairing?.latestScan && pairing.latestScan.id > after ? pairing.latestScan : null);
+  const scan = pairing?.latestScan && pairing.latestScan.id > after ? pairing.latestScan : null;
+  res.json(scan);
 });
 
 module.exports = router;

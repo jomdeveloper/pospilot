@@ -234,7 +234,38 @@ test('rejects duplicate product lines and insufficient payment', async () => {
   assert.equal(db.prepare('SELECT stock FROM products WHERE id = ?').get(productId).stock, 2);
 });
 
-test('senior discount applies only to eligible products and after line discount', async () => {
+test('walk-in VATable price keeps VAT and total consistent', async () => {
+  const db = require('../db');
+  const sampleType = db.prepare('SELECT name, category_name FROM product_types WHERE active = 1 LIMIT 1').get();
+  const product = await req(
+    'POST',
+    '/products',
+    { name: 'Walk-in VATable', brand: 'Test', category: sampleType.category_name, productType: sampleType.name, price: 100, stock: 10 },
+    authToken
+  );
+
+  const sale = await req(
+    'POST',
+    '/sales',
+    {
+      customer: 'Walk-in Customer',
+      customerType: 'walkin',
+      paymentType: 'cash',
+      cashReceived: 100,
+      items: [{ productId: product.data.id, qty: 1, unitPrice: 100 }],
+    },
+    authToken
+  );
+
+  assert.equal(sale.status, 201);
+  assert.equal(sale.data.vatableSales, 89.29);
+  assert.equal(sale.data.vat, 10.71);
+  assert.equal(sale.data.vatExemptSales, 0);
+  assert.equal(sale.data.grandTotal, 100);
+  assert.equal(sale.data.discountTotal, 0);
+});
+
+test('senior discount applies to the VAT-exclusive base and keeps the tax bucket separate', async () => {
   const db = require('../db');
   const sampleType = db.prepare('SELECT name, category_name FROM product_types WHERE active = 1 LIMIT 1').get();
   const eligible = await req(
@@ -257,6 +288,7 @@ test('senior discount applies only to eligible products and after line discount'
       customer: 'Senior Customer',
       customerType: 'senior',
       paymentType: 'cash',
+      cashReceived: 200,
       items: [
         { productId: eligible.data.id, qty: 1, unitPrice: 100 },
         { productId: ineligible.data.id, qty: 1, unitPrice: 100 },
@@ -265,13 +297,78 @@ test('senior discount applies only to eligible products and after line discount'
     authToken
   );
   assert.equal(sale.status, 201);
-  // The 20% is computed on the VAT-EXCLUSIVE amount: each eligible ₱100 line
-  // carries VAT = 100 × 12/112 = 10.71, so VATABLE = 89.29 and 20% = 17.86.
-  // The ineligible line contributes VAT but no senior discount.
-  assert.equal(sale.data.vat, 21.42); // 2 lines × 10.71
-  assert.equal(sale.data.vatable, 178.58); // 200 − 21.42
+  assert.equal(sale.data.vat, 0);
+  assert.equal(sale.data.vatableSales, 0);
+  assert.equal(sale.data.vatExemptSales, 71.43);
   assert.equal(sale.data.seniorPwdDiscountTotal, 17.86);
-  assert.equal(sale.data.grandTotal, 182.14);
+  assert.equal(sale.data.grandTotal, 171.43);
+  assert.equal(sale.data.items[0].discountType, 'SENIOR_CITIZEN');
+  assert.equal(sale.data.items[1].discountType, 'NONE');
+});
+
+test('member discount is tracked separately from senior and PWD discounts', async () => {
+  const db = require('../db');
+  const sampleType = db.prepare('SELECT name, category_name FROM product_types WHERE active = 1 LIMIT 1').get();
+  const product = await req(
+    'POST',
+    '/products',
+    { name: 'Member Item', brand: 'Test', category: sampleType.category_name, productType: sampleType.name, price: 100, stock: 10 },
+    authToken
+  );
+
+  const sale = await req(
+    'POST',
+    '/sales',
+    {
+      customer: 'Member Customer',
+      customerType: 'member',
+      memberId: 'MB-0001',
+      memberDiscountPct: 10,
+      paymentType: 'cash',
+      cashReceived: 90,
+      items: [{ productId: product.data.id, qty: 1, unitPrice: 100, memberDiscountPct: 10 }],
+    },
+    authToken
+  );
+
+  assert.equal(sale.status, 201);
+  assert.equal(sale.data.discountTotal, 10);
+  assert.equal(sale.data.grandTotal, 90);
+  assert.equal(sale.data.items[0].discountType, 'MEMBER');
+  assert.equal(sale.data.items[0].customerDiscount, 10);
+  assert.equal(sale.data.items[0].taxType, 'VATABLE');
+});
+
+test('item-level tax treatments aggregate into balanced tax buckets', async () => {
+  const db = require('../db');
+  const sampleType = db.prepare('SELECT name, category_name FROM product_types WHERE active = 1 LIMIT 1').get();
+  const products = [];
+  for (const [taxType, name] of [['VATABLE', 'Tax VATable'], ['EXEMPT', 'Tax Exempt'], ['ZERO_RATED', 'Tax Zero'], ['NON_VAT', 'Tax Non-VAT']]) {
+    const created = await req('POST', '/products', {
+      name,
+      brand: 'Tax Test',
+      category: sampleType.category_name,
+      productType: sampleType.name,
+      price: 100,
+      stock: 10,
+      taxType,
+    }, authToken);
+    assert.equal(created.status, 201);
+    products.push(created.data.id);
+  }
+
+  const sale = await req('POST', '/sales', {
+    items: products.map((productId) => ({ productId, qty: 1 })),
+    paymentType: 'cash',
+    cashReceived: 400,
+  }, authToken);
+  assert.equal(sale.status, 201);
+  assert.equal(sale.data.vatableSales, 89.29);
+  assert.equal(sale.data.vat, 10.71);
+  assert.equal(sale.data.vatExemptSales, 100);
+  assert.equal(sale.data.zeroRatedSales, 100);
+  assert.equal(sale.data.nonVatSales, 100);
+  assert.equal(sale.data.grandTotal, 400);
 });
 
 test('POS invoice counter advances and duplicate refs replay idempotently', async () => {
@@ -310,6 +407,9 @@ test('POS invoice counter advances and duplicate refs replay idempotently', asyn
   assert.equal(dup.status, 200);
   assert.equal(dup.data.duplicate, true);
   assert.equal(dup.data.id, first.data.id);
+  assert.equal(dup.data.transactionId, 'SI-000001');
+  assert.equal(dup.data.grandTotal, first.data.grandTotal);
+  assert.equal(dup.data.items.length, 1);
 
   const after = db.prepare('SELECT stock FROM products WHERE id = ?').get(productId).stock;
   assert.equal(after, 9); // only ONE decrement, from the first commit
@@ -386,6 +486,29 @@ test('returns advance sale status and prevent returning beyond purchased quantit
     items: [{ itemId, quantity: 1 }], reason: 'Duplicate return', refundMethod: 'cash',
   }, authToken);
   assert.equal(duplicate.status, 409);
+});
+
+test('cash refunds are rejected for non-cash sales', async () => {
+  const db = require('../db');
+  const sampleType = db.prepare('SELECT name, category_name FROM product_types WHERE active = 1 LIMIT 1').get();
+  const product = await req('POST', '/products', {
+    name: 'Card Refund Item', brand: 'Test', category: sampleType.category_name,
+    productType: sampleType.name, price: 75, stock: 5,
+  }, authToken);
+  assert.equal(product.status, 201);
+  const sale = await req('POST', '/sales', {
+    items: [{ productId: product.data.id, qty: 1, unitPrice: 75 }],
+    paymentType: 'card',
+  }, authToken);
+  assert.equal(sale.status, 201);
+  const detail = await req('GET', `/sales/${sale.data.id}`, null, authToken);
+  const rejected = await req('POST', `/sales/${sale.data.id}/return`, {
+    items: [{ itemId: detail.data.items[0].id, quantity: 1 }],
+    reason: 'Refund method mismatch',
+    refundMethod: 'cash',
+  }, authToken);
+  assert.equal(rejected.status, 400);
+  assert.match(rejected.data.error, /received cash/i);
 });
 
 test('logging out invalidates the session token', async () => {

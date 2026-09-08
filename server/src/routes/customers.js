@@ -1,6 +1,7 @@
 const express = require('express');
 const db = require('../db');
 const { authenticate } = require('./auth');
+const { auditLog } = require('../audit');
 
 const router = express.Router();
 
@@ -22,7 +23,9 @@ router.post('/', authenticate, (req, res) => {
 
   try {
     const result = db.prepare('INSERT INTO customers (name, phone, email, customer_type, member_id) VALUES (?, ?, ?, ?, ?)').run(name, phone, email, customerType, memberId);
-    res.status(201).json(db.prepare('SELECT * FROM customers WHERE id = ?').get(result.lastInsertRowid));
+    const customer = db.prepare('SELECT * FROM customers WHERE id = ?').get(result.lastInsertRowid);
+    auditLog(req, 'Created customer', 'Customer', customer.id, { name: customer.name, customerType: customer.customer_type });
+    res.status(201).json(customer);
   } catch {
     res.status(500).json({ error: 'Unable to create customer' });
   }

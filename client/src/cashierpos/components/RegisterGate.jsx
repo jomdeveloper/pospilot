@@ -42,9 +42,6 @@ export default function RegisterGate() {
         >
           Open Register
         </button>
-        <p className="standby__hint">
-          Opening cash is starting drawer cash — it is never counted as sales revenue.
-        </p>
       </div>
     </div>
   );

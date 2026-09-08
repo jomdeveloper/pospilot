@@ -40,8 +40,10 @@ export default function PaymentDialog({ dialog }) {
   const [navRow, setNavRow] = useState(0);
   const [navCol, setNavCol] = useState(0);
   const [stage, setStage] = useState("tender"); // tender|confirm|processing|success|reprint
+  const [successAction, setSuccessAction] = useState(2);
   const [receipt, setReceipt] = useState(null);
   const cashInputRef = useRef(null);
+  const successButtonRefs = useRef([]);
 
   const tenderedNum = parseFloat(tendered) || 0;
   const isCash = method === "cash";
@@ -64,6 +66,11 @@ export default function PaymentDialog({ dialog }) {
   // total already includes it, so we un-do it here) — the discount is printed
   // as its own deduction line, avoiding any double-count.
   const buildReceiptData = (sale, invoiceNo) => {
+    const fromSale = (camelKey, snakeKey, fallback) => {
+      if (!sale || sale.duplicate) return fallback;
+      const value = sale[camelKey] ?? sale[snakeKey];
+      return value == null || value === "" ? fallback : value;
+    };
     const sourceLines =
       (sale && sale.items) ||
       state.cart.map((l) => ({ ...l, unitPrice: l.price, lineTotal: lineNet(l), customerDiscount: 0 }));
@@ -71,23 +78,28 @@ export default function PaymentDialog({ dialog }) {
       lines: sourceLines.map((s) => ({
         sku: s.sku || (s.product && s.product.sku) || "",
         name: s.name || (s.product && s.product.name) || "",
+        taxType: s.taxType || s.tax_type || (s.product && (s.product.taxType || s.product.tax_type)) || "VATABLE",
         price: Number(s.unitPrice ?? s.price) || 0,
         qty: Number(s.qty) || 1,
         net: roundMoney(Number(s.lineTotal) + Number(s.customerDiscount || 0))
       })),
-      subtotal: Number((sale && !sale.duplicate && sale.subtotal) || summary.subtotal) || 0,
-      itemDiscount: Number((sale && !sale.duplicate && sale.itemDiscountTotal) || summary.discount) || 0,
-      seniorDiscount: Number((sale && !sale.duplicate && sale.seniorPwdDiscountTotal) || summary.seniorDiscount) || 0,
-      vat: Number((sale && !sale.duplicate && sale.vat) || summary.vat) || 0,
-      vatable: Number((sale && !sale.duplicate && sale.vatable) || summary.vatable) || 0,
-      grandTotal: Number((sale && !sale.duplicate && sale.grandTotal) || summary.amountDue) || 0,
+      subtotal: Number(fromSale("subtotal", "subtotal", summary.subtotal)) || 0,
+      itemDiscount: Number(fromSale("itemDiscountTotal", "item_discount_total", summary.discount)) || 0,
+      seniorDiscount: Number(fromSale("seniorPwdDiscountTotal", "senior_pwd_discount_total", summary.seniorDiscount)) || 0,
+      vat: Number(fromSale("vat", "vat", summary.vat)) || 0,
+      vatable: Number(fromSale("vatable", "vatable_sales", summary.vatable)) || 0,
+      vatableSales: Number(fromSale("vatableSales", "vatable_sales", summary.vatableSales)) || 0,
+      vatExemptSales: Number(fromSale("vatExemptSales", "vat_exempt_sales", summary.vatExemptSales)) || 0,
+      zeroRatedSales: Number(fromSale("zeroRatedSales", "zero_rated_sales", summary.zeroRatedSales)) || 0,
+      nonVatSales: Number(fromSale("nonVatSales", "non_vat_sales", summary.nonVatSales)) || 0,
+      grandTotal: Number(fromSale("grandTotal", "grand_total", summary.amountDue)) || 0,
       method: isCash ? "cash" : method,
       tendered: isCash ? tenderedNum : 0,
       change: isCash ? Number((sale && !sale.duplicate && sale.changeDue) || change) : 0,
-      customer: state.customer,
-      customerType: state.customerType || "walkin",
-      customerId: state.customerId || "",
-      date: new Date(),
+      customer: (sale && sale.customer) || state.customer,
+      customerType: (sale && (sale.customerType || sale.customer_type)) || state.customerType || "walkin",
+      customerId: (sale && (sale.customerId || sale.customer_id || sale.memberId || sale.member_id)) || state.customerId || "",
+      date: (sale && (sale.createdAt || sale.created_at)) || new Date(),
       invoiceNo: invoiceNo || ""
     };
   };
@@ -114,6 +126,7 @@ export default function PaymentDialog({ dialog }) {
           customer: (state.customer || "").trim() || "Walk-in Customer",
           customerType: state.customerType || "walkin",
           memberId: state.customerType === "member" ? (state.customerId || "").trim() || null : null,
+          customerId: state.customerId || null,
           cashReceived: isCash ? tenderedNum : due,
           paymentType: isCash ? "cash" : method,
           transactionId: invoiceNo,
@@ -141,7 +154,8 @@ export default function PaymentDialog({ dialog }) {
 
     // Build the receipt from the SERVER-AUTHORITATIVE numbers so the printed
     // VAT / discount breakdown matches the database exactly.
-    const data = buildReceiptData(sale, invoiceNo);
+    const savedInvoiceNo = sale && (sale.transactionId || sale.transaction_ref) || invoiceNo;
+    const data = buildReceiptData(sale, savedInvoiceNo);
     setReceipt(data);
 
     // Refresh the session snapshot (cash sales / expected cash moved).
@@ -196,9 +210,28 @@ export default function PaymentDialog({ dialog }) {
   useEffect(focusTenderInput, [method, isCash, stage]);
 
   useEffect(() => {
-    function isCashFocused() {
-      return document.activeElement === cashInputRef.current;
+    if (stage !== "success") return;
+    const button = successButtonRefs.current[successAction];
+    if (button) button.focus();
+  }, [stage, successAction]);
+
+  const handleSuccessKeyDown = (e) => {
+    if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+      e.preventDefault();
+      e.stopPropagation();
+      const direction = e.key === "ArrowRight" ? 1 : -1;
+      setSuccessAction((index) => (index + direction + 3) % 3);
+      return;
     }
+    if (e.key === "Enter") {
+      e.preventDefault();
+      e.stopPropagation();
+      const button = successButtonRefs.current[successAction];
+      if (button) button.click();
+    }
+  };
+
+  useEffect(() => {
     function onKey(e) {
       if (stage !== "tender") return;
       const arrows = ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"];
@@ -295,11 +328,32 @@ export default function PaymentDialog({ dialog }) {
   if (stage === "success") {
     return (
       <Dialog wide title="Transaction Complete" hideClose onClose={close} footer={
-        <>
-          <button type="button" className="dialog-btn dialog-btn--ghost" onClick={close}>Cancel</button>
-          <button type="button" className="dialog-btn dialog-btn--ghost" onClick={reprint}>Reprint</button>
-          <button type="button" className="dialog-btn dialog-btn--primary" onClick={newTransaction}>New Transaction</button>
-        </>
+        <div className="dialog__actions" onKeyDown={handleSuccessKeyDown}>
+          <button
+            type="button"
+            ref={(button) => (successButtonRefs.current[0] = button)}
+            className={"dialog-btn dialog-btn--ghost" + (successAction === 0 ? " dialog-btn--selected" : "")}
+            onClick={close}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            ref={(button) => (successButtonRefs.current[1] = button)}
+            className={"dialog-btn dialog-btn--ghost dialog-btn--reprint" + (successAction === 1 ? " dialog-btn--selected" : "")}
+            onClick={reprint}
+          >
+            Reprint
+          </button>
+          <button
+            type="button"
+            ref={(button) => (successButtonRefs.current[2] = button)}
+            className={"dialog-btn dialog-btn--primary dialog-btn--new-transaction" + (successAction === 2 ? " dialog-btn--selected" : "")}
+            onClick={newTransaction}
+          >
+            New Transaction
+          </button>
+        </div>
       }>
         <div className="ok">
           <div className="ok__check" aria-hidden="true">

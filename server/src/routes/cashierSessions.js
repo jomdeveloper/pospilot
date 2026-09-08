@@ -27,6 +27,15 @@ const router = express.Router();
 const requireCashierOrAbove = requireRole('administrator', 'admin', 'manager', 'cashier');
 const requireManagerOrAbove = requireRole('administrator', 'admin', 'manager');
 
+function hasSessionAccess(session, req) {
+  const role = String(req.session?.role || '').trim().toLowerCase();
+  if (['administrator', 'admin', 'manager'].includes(role)) return true;
+  return Boolean(db.prepare(
+    `SELECT 1 FROM register_cashier_activity
+     WHERE cashier_session_id = ? AND user_id = ? AND status = 'Active'`
+  ).get(session.id, req.session.userId));
+}
+
 function parseJson(value) {
   try {
     return value ? JSON.parse(value) : null;
@@ -108,6 +117,7 @@ router.post('/', requireCashierOrAbove, (req, res) => {
     const { store, branch } = cashDrawer.storeIdentity();
     const sessionRef = cashDrawer.sessionRef();
 
+    let openingActivity;
     const sessionId = db.transaction(() => {
       const result = db
         .prepare(
@@ -132,7 +142,10 @@ router.post('/', requireCashierOrAbove, (req, res) => {
       cashDrawer.recordCashMovement(session, 'opening_float', openingFloat, 'Opening cash float', {
         reference: sessionRef,
         notes: req.body.notes || null,
+        actorUserId: req.session.userId,
+        actorUsername: req.session.username,
       });
+      openingActivity = cashDrawer.ensureCashierActivity(session, req.session.userId, req.session.username);
       return id;
     })();
 
@@ -142,6 +155,13 @@ router.post('/', requireCashierOrAbove, (req, res) => {
       openingFloat,
       denominations: counts ? cashDrawer.denominationBreakdown(counts) : null,
     });
+    if (openingActivity?.created) {
+      auditLog(req, 'Cashier activity started', 'CashierActivity', openingActivity.activity.id, {
+        cashierSessionId: sessionId,
+        sessionRef,
+        terminal,
+      });
+    }
 
     const full = db.prepare('SELECT * FROM cashier_sessions WHERE id = ?').get(sessionId);
     return res.status(201).json({ ok: true, session: serializeSession(full) });
@@ -159,6 +179,14 @@ router.get('/current', authenticate, (req, res) => {
   const terminal = String(req.query.terminal || 'POS-02').trim().slice(0, 40) || 'POS-02';
   const session = cashDrawer.getOpenSessionForTerminal(terminal);
   if (!session) return res.json({ session: null });
+  const activity = cashDrawer.ensureCashierActivity(session, req.session.userId, req.session.username);
+  if (activity.created) {
+    auditLog(req, 'Cashier activity started', 'CashierActivity', activity.activity.id, {
+      cashierSessionId: session.id,
+      sessionRef: session.session_ref,
+      terminal: session.terminal,
+    });
+  }
   return res.json({ session: serializeSession(session) });
 });
 
@@ -166,7 +194,7 @@ router.get('/current', authenticate, (req, res) => {
 /*  List + daily summary (reports)                                     */
 /* ------------------------------------------------------------------ */
 
-router.get('/summary', authenticate, (req, res) => {
+router.get('/summary', requireManagerOrAbove, (req, res) => {
   const date = String(req.query.date || '').trim();
   const where = date ? 'WHERE date(opened_at) = ?' : '';
   const params = date ? [date] : [];
@@ -192,7 +220,7 @@ router.get('/summary', authenticate, (req, res) => {
   return res.json({ date: date || null, sessions: sessions.map(serializeSession), totals });
 });
 
-router.get('/', authenticate, (req, res) => {
+router.get('/', requireManagerOrAbove, (req, res) => {
   const limit = Math.min(500, Math.max(1, Number(req.query.limit) || 200));
   const terminal = String(req.query.terminal || '').trim();
   const status = String(req.query.status || '').trim().toLowerCase();
@@ -221,19 +249,31 @@ function movementRoute(transactionType, column, actionLabel, requireManager = fa
       const sessionId = Number(req.params.id);
       const session = cashDrawer.getSession(sessionId);
       cashDrawer.assertOpenSession(session);
+      if (!hasSessionAccess(session, req)) return res.status(403).json({ error: 'You are not assigned to this register session' });
 
       const amount = roundMoney(Number(req.body.amount));
       if (!Number.isFinite(amount)) return res.status(400).json({ error: 'Amount must be a number' });
       cashDrawer.assertPositive(amount, 'Amount');
 
+      if ((transactionType === 'cash_out' || transactionType === 'cash_drop')) {
+        const expectedCash = cashDrawer.computeSessionSummary(session.id).expectedCash;
+        if (amount > expectedCash) {
+          return res.status(400).json({ error: `Amount cannot exceed the expected drawer cash of ${expectedCash.toFixed(2)}` });
+        }
+      }
+
       const reason = String(req.body.reason || '').trim();
       if (!reason) return res.status(400).json({ error: 'A reason is required' });
       const notes = String(req.body.notes || '').trim() || null;
 
+      let activity;
       db.transaction(() => {
+        activity = cashDrawer.ensureCashierActivity(session, req.session.userId, req.session.username);
         cashDrawer.recordCashMovement(session, transactionType, amount, reason, {
           notes,
           reference: String(req.body.reference || '').trim() || null,
+          actorUserId: req.session.userId,
+          actorUsername: req.session.username,
           update: () => {
             db.prepare(`UPDATE cashier_sessions SET ${column} = ${column} + ? WHERE id = ?`).run(amount, session.id);
           },
@@ -246,6 +286,13 @@ function movementRoute(transactionType, column, actionLabel, requireManager = fa
         reason,
         notes,
       });
+      if (activity?.created) {
+        auditLog(req, 'Cashier activity started', 'CashierActivity', activity.activity.id, {
+          cashierSessionId: session.id,
+          sessionRef: session.session_ref,
+          terminal: session.terminal,
+        });
+      }
 
       const full = cashDrawer.getSession(session.id);
       return res.json({ ok: true, session: serializeSession(full) });
@@ -269,6 +316,7 @@ router.post('/:id/adjust', requireManagerOrAbove, (req, res) => {
     const sessionId = Number(req.params.id);
     const session = cashDrawer.getSession(sessionId);
     cashDrawer.assertOpenSession(session);
+    if (!hasSessionAccess(session, req)) return res.status(403).json({ error: 'You are not assigned to this register session' });
 
     const amount = roundMoney(Number(req.body.amount));
     if (!Number.isFinite(amount)) return res.status(400).json({ error: 'Amount must be a number' });
@@ -285,10 +333,14 @@ router.post('/:id/adjust', requireManagerOrAbove, (req, res) => {
     const type = direction === 'in' ? 'adjustment_in' : 'adjustment_out';
     const column = direction === 'in' ? 'adjustment_in' : 'adjustment_out';
 
+    let activity;
     db.transaction(() => {
+      activity = cashDrawer.ensureCashierActivity(session, req.session.userId, req.session.username);
       cashDrawer.recordCashMovement(session, type, amount, reason, {
         notes,
         reference: String(req.body.reference || '').trim() || null,
+        actorUserId: req.session.userId,
+        actorUsername: req.session.username,
         update: () => {
           db.prepare(`UPDATE cashier_sessions SET ${column} = ${column} + ? WHERE id = ?`).run(amount, session.id);
         },
@@ -302,6 +354,13 @@ router.post('/:id/adjust', requireManagerOrAbove, (req, res) => {
       reason,
       notes,
     });
+    if (activity?.created) {
+      auditLog(req, 'Cashier activity started', 'CashierActivity', activity.activity.id, {
+        cashierSessionId: session.id,
+        sessionRef: session.session_ref,
+        terminal: session.terminal,
+      });
+    }
 
     const full = cashDrawer.getSession(session.id);
     return res.json({ ok: true, session: serializeSession(full) });
@@ -318,6 +377,7 @@ router.post('/:id/close', requireCashierOrAbove, (req, res) => {
     const sessionId = Number(req.params.id);
     const session = cashDrawer.getSession(sessionId);
     cashDrawer.assertOpenSession(session);
+    if (!hasSessionAccess(session, req)) return res.status(403).json({ error: 'You are not assigned to this register session' });
 
     // Actual cash comes from either a direct entry or a denomination count.
     let actualCash = null;
@@ -368,7 +428,10 @@ router.post('/:id/close', requireCashierOrAbove, (req, res) => {
       cashDrawer.recordCashMovement(session, 'actual_cash', actualCash, 'Actual cash counted at closing', {
         notes,
         reference: session.session_ref,
+        actorUserId: req.session.userId,
+        actorUsername: req.session.username,
       });
+      cashDrawer.endCashierActivityForSession(session.id);
     })();
 
     auditLog(req, 'Closed cashier session', 'CashierSession', session.id, {
@@ -378,6 +441,11 @@ router.post('/:id/close', requireCashierOrAbove, (req, res) => {
       difference,
       differenceStatus,
       denominations: counts ? cashDrawer.denominationBreakdown(counts) : null,
+    });
+    auditLog(req, 'Cashier activities ended', 'CashierActivity', session.id, {
+      cashierSessionId: session.id,
+      sessionRef: session.session_ref,
+      terminal: session.terminal,
     });
 
     const full = cashDrawer.getSession(session.id);
@@ -395,6 +463,34 @@ router.post('/:id/close', requireCashierOrAbove, (req, res) => {
 });
 
 /* ------------------------------------------------------------------ */
+/*  Reprintable sales for the active cashier session                    */
+/* ------------------------------------------------------------------ */
+
+router.get('/:id/reprintable-sales', authenticate, (req, res) => {
+  const sessionId = Number(req.params.id);
+  const session = cashDrawer.getSession(sessionId);
+  if (!session) return res.status(404).json({ error: 'Cashier session not found' });
+  if (session.status !== 'Open') return res.status(400).json({ error: 'Closed cashier sessions have no printable sales' });
+  if (!hasSessionAccess(session, req)) {
+    return res.status(403).json({ error: 'Only the active cashier can reprint this session\'s sales' });
+  }
+
+  const sales = db.prepare(`
+    SELECT s.*, cs.cashier_username
+    FROM sales s
+    JOIN cashier_sessions cs ON cs.id = s.cashier_session_id
+    WHERE s.cashier_session_id = ?
+      AND s.status NOT IN ('VOIDED', 'CANCELLED')
+    ORDER BY s.id DESC
+  `).all(sessionId);
+  const items = db.prepare('SELECT * FROM sale_items WHERE sale_id = ? ORDER BY id ASC');
+  return res.json({
+    sessionId,
+    sales: sales.map((sale) => ({ ...sale, items: items.all(sale.id) }))
+  });
+});
+
+/* ------------------------------------------------------------------ */
 /*  Session detail + its cash-movement ledger                          */
 /* ------------------------------------------------------------------ */
 
@@ -402,13 +498,25 @@ router.get('/:id', authenticate, (req, res) => {
   const id = Number(req.params.id);
   const session = cashDrawer.getSession(id);
   if (!session) return res.status(404).json({ error: 'Cashier session not found' });
+  if (!hasSessionAccess(session, req)) return res.status(403).json({ error: 'You are not assigned to this register session' });
 
   const movements = db
     .prepare('SELECT * FROM cash_transactions WHERE cashier_session_id = ? ORDER BY id ASC')
     .all(id);
+  const activities = db
+    .prepare('SELECT * FROM register_cashier_activity WHERE cashier_session_id = ? ORDER BY id ASC')
+    .all(id);
 
   return res.json({
     session: serializeSession(session),
+    activities: activities.map((row) => ({
+      id: row.id,
+      userId: row.user_id,
+      username: row.username,
+      startedAt: row.started_at,
+      endedAt: row.ended_at,
+      status: row.status,
+    })),
     movements: movements.map((row) => ({
       id: row.id,
       transactionRef: row.transaction_ref,
@@ -418,6 +526,8 @@ router.get('/:id', authenticate, (req, res) => {
       notes: row.notes,
       reference: row.reference,
       cashierUsername: row.cashier_username,
+      actorUserId: row.actor_user_id,
+      actorUsername: row.actor_username,
       createdAt: row.created_at,
     })),
   });

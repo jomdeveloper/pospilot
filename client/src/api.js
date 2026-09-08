@@ -54,9 +54,7 @@ export const api = {
 
   getProducts: (q = '') => request(`/products${q ? `?q=${encodeURIComponent(q)}` : ''}`),
 
-  searchProducts: (params = {}) => request(`/products${toQueryString(params)}`),
-
-  getProductFilterMeta: () => request('/products/filters'),
+  searchProducts: (params = {}, authToken) => request(`/products${toQueryString(params)}`, { authToken }),
 
   getProduct: (id) => request(`/products/${id}`),
 
@@ -81,7 +79,7 @@ export const api = {
       authToken,
     }),
 
-  getProductByBarcode: (barcode) => request(`/products/barcode/${encodeURIComponent(barcode)}`),
+  getProductByBarcode: (barcode, authToken) => request(`/products/barcode/${encodeURIComponent(barcode)}`, { authToken }),
 
   createBarcodePairing: (authToken) => request('/barcode-scans/pairing', { method: 'POST', authToken }),
   connectBarcodePairing: (key, phoneToken) => request('/barcode-scans/connect', {
@@ -90,6 +88,8 @@ export const api = {
     ...(phoneToken ? { authToken: phoneToken } : {}),
   }),
   getBarcodePairingStatus: (authToken) => request('/barcode-scans/status', { authToken }),
+
+  heartbeatBarcodePairing: (phoneToken) => request('/barcode-scans/heartbeat', { method: 'POST', authToken: phoneToken }),
 
   publishBarcodeScan: (barcode, authToken) => request('/barcode-scans', {
     method: 'POST',
@@ -193,7 +193,7 @@ export const api = {
 
   getCustomers: (q = '') => request(`/customers${q ? `?q=${encodeURIComponent(q)}` : ''}`),
 
-  getAuditLogs: (authToken) => request('/audit-logs', { authToken }),
+  getAuditLogs: (params = {}, authToken) => request(`/audit-logs${toQueryString(params)}`, { authToken }),
 
   getInventoryStock: () => request('/inventory/stock'),
 
@@ -294,11 +294,11 @@ export const api = {
 
   getCashierSession: (id, authToken) => request(`/cashier-sessions/${id}`, { authToken }),
 
+  getReprintableSales: (id, authToken) =>
+    request(`/cashier-sessions/${encodeURIComponent(id)}/reprintable-sales`, { authToken }),
+
   getCashierSessions: (params = {}, authToken) =>
     request(`/cashier-sessions${toQueryString(params)}`, { authToken }),
-
-  getCashierSessionSummary: (date, authToken) =>
-    request(`/cashier-sessions/summary${date ? `?date=${encodeURIComponent(date)}` : ''}`, { authToken }),
 
   cashIn: (id, payload, authToken) =>
     request(`/cashier-sessions/${id}/cash-in`, { method: 'POST', body: JSON.stringify(payload), authToken }),
@@ -308,9 +308,6 @@ export const api = {
 
   cashDrop: (id, payload, authToken) =>
     request(`/cashier-sessions/${id}/cash-drop`, { method: 'POST', body: JSON.stringify(payload), authToken }),
-
-  cashAdjust: (id, payload, authToken) =>
-    request(`/cashier-sessions/${id}/adjust`, { method: 'POST', body: JSON.stringify(payload), authToken }),
 
   closeCashierSession: (id, payload, authToken) =>
     request(`/cashier-sessions/${id}/close`, { method: 'POST', body: JSON.stringify(payload), authToken }),

@@ -4,7 +4,9 @@ import Button from "../../components/ui/Button";
 import { money } from "../../theme";
 import { getStoreLogo, getStoreIdentity } from "../../../cashierpos/data/storeConfig";
 
-export default function ReceiptModal({ t, cart, subtotal, tax, total, method, invoiceId, onNewSale }) {
+const TAX_LABELS = { VATABLE: "V", EXEMPT: "E", ZERO_RATED: "Z", NON_VAT: "N" };
+
+export default function ReceiptModal({ t, cart, subtotal, tax, total, method, invoiceId, onNewSale, vatableSales = 0, vatExemptSales = 0, zeroRatedSales = 0, nonVatSales = 0 }) {
   const identity = getStoreIdentity();
   const logo = getStoreLogo();
   return (
@@ -21,13 +23,16 @@ export default function ReceiptModal({ t, cart, subtotal, tax, total, method, in
         <div className="border-t border-dashed pt-2 space-y-1 text-[11px]" style={{ borderColor: t.border }}>
           {cart.map((i) => (
             <div key={i.id} className="flex justify-between" style={{ color: t.sub }}>
-              <span>{i.qty}× {i.name.slice(0, 20)}</span><span style={{ color: t.text }}>{money(i.price * i.qty)}</span>
+              <span>{i.qty}× {i.name.slice(0, 17)} ({TAX_LABELS[String(i.taxType || i.tax_type || "VATABLE").toUpperCase()] || "V"})</span><span style={{ color: t.text }}>{money(i.price * i.qty)}</span>
             </div>
           ))}
         </div>
         <div className="border-t border-dashed mt-2 pt-2 text-[11px] space-y-1" style={{ borderColor: t.border }}>
           <div className="flex justify-between" style={{ color: t.sub }}><span>Subtotal</span><span>{money(subtotal)}</span></div>
-          {tax > 0 && <div className="flex justify-between" style={{ color: t.sub }}><span>Tax</span><span>{money(tax)}</span></div>}
+          <div className="flex justify-between" style={{ color: t.sub }}><span>VATable / VAT</span><span>{money(vatableSales)} / {money(tax)}</span></div>
+          <div className="flex justify-between" style={{ color: t.sub }}><span>VAT Exempt</span><span>{money(vatExemptSales)}</span></div>
+          <div className="flex justify-between" style={{ color: t.sub }}><span>Zero Rated</span><span>{money(zeroRatedSales)}</span></div>
+          <div className="flex justify-between" style={{ color: t.sub }}><span>Non-VAT</span><span>{money(nonVatSales)}</span></div>
           <div className="flex justify-between font-bold text-xs mt-1" style={{ color: t.text }}><span>Total</span><span>{money(total)}</span></div>
         </div>
         <div className="flex gap-2 mt-4">

@@ -30,10 +30,9 @@ const KEY_ACTIONS = {
   F1: "search",
   F2: "productSearch",
   F3: "quantity",
-  F4: "discount",
-  F5: "priceCheck",
+  F4: "customer",
+  F5: "discount",
   F6: "hold",
-  F12: "pause",
   F7: "recall",
   F10: "more"               // F10 More
 };
@@ -81,6 +80,32 @@ function useKeyboardShortcuts() {
       // Dialog component itself). This stops e.g. F3 (Quantity) or F8 (Pay)
       // from firing/replacing the current dialog mid-interaction.
       if (state.dialog) return;
+
+      // F11 starts a new transaction only from Ready mode. Never replace or
+      // interrupt an active or paused transaction with a new one.
+      const isF11 = e.key === "F11" || e.code === "F11";
+      if (isF11) {
+        e.preventDefault();
+        if (state.standby && !state.paused) {
+          actions.startTransaction();
+          actions.showToast("New transaction started", false, "success");
+        }
+        return;
+      }
+
+      // F12 is a direct pause/resume toggle. Check both values because the
+      // browser and Electron can expose function keys through either field.
+      const isF12 = e.key === "F12" || e.code === "F12";
+      if (isF12) {
+        e.preventDefault();
+        if (state.paused) {
+          actions.resumeTransaction();
+          actions.showToast("Transaction resumed", false, "success");
+        } else if (!state.standby) {
+          dispatchAction("pause");
+        }
+        return;
+      }
 
       // Ready / Paused Mode: no active transaction to act on, so all transaction
       // shortcuts (F1..F10, Delete, arrows) are inert. The New Transaction /
@@ -225,19 +250,6 @@ function useBarcodeCapture() {
       if (timer) { clearTimeout(timer); timer = null; }
       if (!q) return;
 
-      // If a modal is open (most commonly the Add-Quantity dialog still
-      // pending from a previous scan), the new burst means the cashier moved
-      // on: accept the pending item at its qty-1 default, then process the new
-      // scan. Other dialogs are dismissed so the scan always wins — exactly
-      // like a dedicated hardware scanner should behave.
-      const dlg = ref.current.state.dialog;
-      if (dlg) {
-        ref.current.actions.closeDialog();
-        if (dlg.type === "addQuantity" && dlg.product) {
-          ref.current.actions.addProduct(dlg.product, 1);
-        }
-      }
-
       // Route the scan into the barcode field path: set the value, then
       // trigger the same Enter-handler flow that resolves barcode/SKU.
       const input = document.getElementById("product-search-input");
@@ -258,6 +270,10 @@ function useBarcodeCapture() {
     };
 
     const handle = (e) => {
+      // Dialogs own the keyboard. Do not capture scanner keystrokes or close
+      // the dialog when a cashier scans while a modal is open.
+      if (ref.current.state.dialog) { reset(); return; }
+
       // Never capture while a modifier combo is held (Ctrl/Alt) — those are
       // app shortcuts (Ctrl+K focus, Ctrl+Alt+C cancel, Ctrl+Q quit, …).
       if (e.ctrlKey || e.metaKey || e.altKey) { reset(); return; }
@@ -315,7 +331,7 @@ function useBarcodeCapture() {
 function PosApp() {
   useKeyboardShortcuts();
   useBarcodeCapture();
-  const { state, dispatchAction, runtime } = usePos();
+  const { state, dispatchAction } = usePos();
   const localOnly = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
   const networkStatus = localOnly ? "Offline · Local only" : "Lan connected";
   // The footer's transaction number follows the ACTIVE transaction. After a
@@ -366,17 +382,6 @@ function PosApp() {
               <span className={localOnly ? "pos-footer__offline" : "pos-footer__online"}>
                 {" · " + networkStatus}
               </span>
-            </span>
-            <span className="pos-footer__actions">
-              <button type="button" className="pos-footer__link" onClick={() => dispatchAction("cashIn")}>
-                Cash In
-              </button>
-              <button type="button" className="pos-footer__link" onClick={() => dispatchAction("cashOut")}>
-                Cash Out
-              </button>
-              <button type="button" className="pos-footer__link" onClick={() => dispatchAction("closeRegister")}>
-                Close Register
-              </button>
             </span>
             <span>
               {state.standby
@@ -430,7 +435,7 @@ export default function CashierPOS({ loggedInUser, loggedInRole, sessionToken, o
       api
         .getSalesNextNumber(sessionToken)
         .then((res) => {
-          if (active && res && Number(res.next) > 0) {
+            if (active && res && Number(res.next) > 0) {
             setSaleNumber(Number(res.next));
             setInvoiceCounter(Number(res.next));
           }
@@ -465,7 +470,7 @@ export default function CashierPOS({ loggedInUser, loggedInRole, sessionToken, o
   function SaleNumberSeeder() {
     const { actions } = usePos();
     useEffect(() => {
-      if (saleNumber > 1) actions.setSaleNumber(saleNumber);
+      if (Number(saleNumber) > 0) actions.setSaleNumber(saleNumber);
     }, [saleNumber]);
     return null;
   }

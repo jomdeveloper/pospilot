@@ -75,7 +75,9 @@ export function posReducer(state, action) {
       return { ...state, session: action.session }; // null = register closed
 
     case "START_TRANSACTION":
-      // Leave Ready Mode → an active, blank transaction begins.
+      // A new sale can only begin from Ready Mode. Never replace an active or
+      // paused transaction through a shortcut or another caller.
+      if (!state.standby || state.paused) return state;
       return { ...state, standby: false, paused: false };
 
     case "PAUSE_TRANSACTION":
@@ -115,6 +117,7 @@ export function posReducer(state, action) {
         productId: product.productId || product.id || null,
         generic: product.generic || "",
         category: product.category || "",
+        taxType: String(product.taxType || product.tax_type || "VATABLE").toUpperCase(),
         seniorDiscountEligible: Boolean(product.seniorDiscountEligible),
         pwdDiscountEligible: Boolean(product.pwdDiscountEligible)
       };
@@ -259,6 +262,7 @@ export function posReducer(state, action) {
       const invoiceNo = action?.extra?.invoiceNo || formatInvoiceNo(state.saleNumber);
       const sale = {
         id: action?.extra?.id || Date.now(),
+        pendingSaleId: action?.extra?.pendingSaleId || null,
         invoiceNo,
         cashier: action?.extra?.cashier || CASHIER,
         lines: action?.extra?.lines || state.cart.map((l) => ({ ...l })),
@@ -292,9 +296,11 @@ export function posReducer(state, action) {
         customer: sale.customer || state.customer,
         customerType: sale.customerType || state.customerType || "walkin",
         customerId: sale.customerId || "",
-        pendingSaleId: sale.id || null,
+        pendingSaleId: sale.pendingSaleId || null,
         heldSales: state.heldSales.filter((_, i) => i !== action.index),
-        saleNumber: recalledNumber || state.saleNumber
+        saleNumber: recalledNumber || state.saleNumber,
+        standby: false,
+        paused: false
       };
     }
 

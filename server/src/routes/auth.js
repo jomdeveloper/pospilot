@@ -2,6 +2,7 @@ const crypto = require('crypto');
 const express = require('express');
 const db = require('../db');
 const { auditLog } = require('../audit');
+const cashDrawer = require('../cashDrawer');
 const { hashPassword, passwordPolicyError } = require('../security');
 
 const router = express.Router();
@@ -278,7 +279,15 @@ router.post('/logout', (req, res) => {
   if (session) {
     req.session = session;
     db.prepare('DELETE FROM sessions WHERE token_hash = ?').run(tokenHash(token));
+    const endedActivities = cashDrawer.endCashierActivityForUser(session.userId);
     auditLog(req, 'Logout', 'User', session.userId, { username: session.username });
+    if (endedActivities > 0) {
+      auditLog(req, 'Cashier activity ended', 'CashierActivity', session.userId, {
+        username: session.username,
+        activityCount: endedActivities,
+        reason: 'logout',
+      });
+    }
   }
   res.json({ ok: true });
 });

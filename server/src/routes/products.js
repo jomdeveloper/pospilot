@@ -12,6 +12,7 @@ const router = express.Router();
 
 const DEFAULT_LIMIT = 24;
 const MAX_LIMIT = 100;
+const TAX_TYPES = new Set(['VATABLE', 'VAT_EXEMPT', 'EXEMPT', 'ZERO_RATED', 'NON_VAT']);
 
 function resolveProductImageUrl(productLike) {
   const source = productLike || {};
@@ -76,6 +77,8 @@ router.post('/', requireCategoryManager, (req, res) => {
   const brand = String(body.brand || '').trim();
   const barcode = String(body.barcode || '').trim() || null;
   const price = Number(body.price);
+  const taxType = String(body.taxType ?? body.tax_type ?? 'VATABLE').trim().toUpperCase();
+  const normalizedTaxType = taxType === 'VAT_EXEMPT' ? 'EXEMPT' : taxType;
   const stock = Number(body.stock || 0);
   const costPrice = Number(body.costPrice || 0);
     const reorderLevel = Number(body.reorderLevel || 0);
@@ -88,7 +91,7 @@ router.post('/', requireCategoryManager, (req, res) => {
   const typeMatchesCategory = Boolean(db.prepare('SELECT 1 FROM product_types WHERE name = ? AND category_name = ? AND active = 1').get(productType, category));
   const missingAttribute = getMissingRequiredAttribute(productType, body.attributes);
 
-  if (!name || !brand || !category || !productType || !typeMatchesCategory || missingAttribute || !Number.isFinite(price) || price < 0 || !Number.isInteger(stock) || stock < 0 || !Number.isFinite(costPrice) || costPrice < 0 || !Number.isInteger(reorderLevel) || reorderLevel < 0 || (maximumStock !== null && (!Number.isInteger(maximumStock) || maximumStock < 0)) || (packSize !== null && (!Number.isInteger(packSize) || packSize < 0))) {
+  if (!name || !brand || !category || !productType || !typeMatchesCategory || missingAttribute || !TAX_TYPES.has(taxType) || !Number.isFinite(price) || price < 0 || !Number.isInteger(stock) || stock < 0 || !Number.isFinite(costPrice) || costPrice < 0 || !Number.isInteger(reorderLevel) || reorderLevel < 0 || (maximumStock !== null && (!Number.isInteger(maximumStock) || maximumStock < 0)) || (packSize !== null && (!Number.isInteger(packSize) || packSize < 0))) {
     if (missingAttribute) return res.status(400).json({ error: `${missingAttribute.name} is required` });
     return res.status(400).json({ error: 'Name, valid price, and non-negative stock are required' });
   }
@@ -96,8 +99,8 @@ router.post('/', requireCategoryManager, (req, res) => {
   try {
     const createProduct = db.transaction(() => {
     const result = db.prepare(`
-      INSERT INTO products (name, generic, barcode, price, stock, sku, category, brand, product_type, subcategory, description, unit_of_measure, pack_size, status, image_url, cost_price, track_inventory, reorder_level, maximum_stock, preferred_supplier_id, track_batch, track_expiry, track_serial, senior_discount_eligible, pwd_discount_eligible, promo_eligible, loyalty_eligible)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO products (name, generic, barcode, price, stock, sku, category, brand, product_type, subcategory, description, unit_of_measure, pack_size, status, image_url, tax_type, cost_price, track_inventory, reorder_level, maximum_stock, preferred_supplier_id, track_batch, track_expiry, track_serial, senior_discount_eligible, pwd_discount_eligible, promo_eligible, loyalty_eligible)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       name,
       String(body.generic || '').trim() || null,
@@ -114,6 +117,7 @@ router.post('/', requireCategoryManager, (req, res) => {
       packSize,
       String(body.status || 'Active').trim() || 'Active',
       imageUrl,
+      taxType,
       costPrice,
       category === 'Services' ? 0 : (body.trackInventory === false ? 0 : 1),
       reorderLevel,
@@ -171,10 +175,12 @@ router.patch('/:id', requireAdministrator, (req, res) => {
   const packSize = body.packSize === '' || body.packSize == null ? null : Number(body.packSize);
   const existing = db.prepare('SELECT * FROM products WHERE id = ?').get(productId);
   if (!existing) return res.status(404).json({ error: 'Product not found' });
+  const taxType = String(body.taxType ?? body.tax_type ?? existing.tax_type ?? 'VATABLE').trim().toUpperCase();
+  const normalizedTaxType = taxType === 'VAT_EXEMPT' ? 'EXEMPT' : taxType;
   const typeMatchesCategory = db.prepare('SELECT 1 FROM product_types WHERE name = ? AND category_name = ? AND active = 1').get(productType, category);
   const missingAttribute = getMissingRequiredAttribute(productType, body.attributes);
 
-  if (!Number.isInteger(productId) || !name || !brand || !category || !productType || !typeMatchesCategory || missingAttribute || !Number.isFinite(price) || price < 0 || !Number.isFinite(costPrice) || costPrice < 0 || (packSize !== null && (!Number.isInteger(packSize) || packSize < 0))) {
+  if (!Number.isInteger(productId) || !name || !brand || !category || !productType || !typeMatchesCategory || missingAttribute || !TAX_TYPES.has(taxType) || !Number.isFinite(price) || price < 0 || !Number.isFinite(costPrice) || costPrice < 0 || (packSize !== null && (!Number.isInteger(packSize) || packSize < 0))) {
     if (missingAttribute) return res.status(400).json({ error: `${missingAttribute.name} is required` });
     return res.status(400).json({ error: 'Name, category, product type, valid prices, and non-negative stock are required' });
   }
@@ -182,7 +188,7 @@ router.patch('/:id', requireAdministrator, (req, res) => {
 
   try {
     db.prepare(`
-      UPDATE products SET name = ?, generic = ?, barcode = ?, price = ?, category = ?, brand = ?, product_type = ?, subcategory = ?, description = ?, unit_of_measure = ?, pack_size = ?, image_url = ?, cost_price = ?, track_inventory = ?, reorder_level = ?, maximum_stock = ?, track_batch = ?, track_expiry = ?, track_serial = ?, senior_discount_eligible = ?, pwd_discount_eligible = ?, promo_eligible = ?, loyalty_eligible = ?
+      UPDATE products SET name = ?, generic = ?, barcode = ?, price = ?, category = ?, brand = ?, product_type = ?, subcategory = ?, description = ?, unit_of_measure = ?, pack_size = ?, image_url = ?, tax_type = ?, cost_price = ?, track_inventory = ?, reorder_level = ?, maximum_stock = ?, track_batch = ?, track_expiry = ?, track_serial = ?, senior_discount_eligible = ?, pwd_discount_eligible = ?, promo_eligible = ?, loyalty_eligible = ?
       WHERE id = ?
     `).run(
       name,
@@ -197,6 +203,7 @@ router.patch('/:id', requireAdministrator, (req, res) => {
       String(body.unitOfMeasure || body.unit_of_measure || 'unit').trim() || 'unit',
       packSize,
       imageUrl,
+      taxType,
       costPrice,
       category === 'Services' ? 0 : (body.trackInventory === false ? 0 : 1),
       Number(body.reorderLevel ?? body.reorder_level ?? 0),
@@ -336,6 +343,8 @@ function normalizeProduct(row) {
     imageUrl: row.image_url || null,
     product_type: normalizedProductType,
     productType: normalizedProductType,
+    tax_type: String(row.tax_type || 'VATABLE').toUpperCase(),
+    taxType: String(row.tax_type || 'VATABLE').toUpperCase(),
     senior_discount_eligible: Boolean(row.senior_discount_eligible),
     pwd_discount_eligible: Boolean(row.pwd_discount_eligible),
     seniorDiscountEligible: Boolean(row.senior_discount_eligible),
@@ -346,11 +355,9 @@ function normalizeProduct(row) {
 function searchProducts(params) {
   const page = Math.max(1, parseInt(params.page, 10) || 1);
   const limit = Math.min(MAX_LIMIT, Math.max(1, parseInt(params.limit, 10) || DEFAULT_LIMIT));
-  const { expBefore } = buildProductSearchQuery(params);
+  const { where, bindings, expBefore } = buildProductSearchQuery(params);
 
   let rows;
-
-  const { where, bindings } = buildProductSearchQuery(params);
   rows = db
     .prepare(`SELECT * FROM products ${where} ORDER BY name ASC`)
     .all(...bindings)

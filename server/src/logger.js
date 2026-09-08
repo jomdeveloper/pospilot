@@ -42,7 +42,9 @@ function stamp() {
 }
 
 function write(level, scope, message, meta) {
-  const line = `[${stamp()}] ${level} ${scope ? '[' + scope + '] ' : ''}${message}${meta !== undefined ? ' ' + JSON.stringify(meta) : ''}`;
+  let serializedMeta = '';
+  try { serializedMeta = meta !== undefined ? ` ${JSON.stringify(meta)}` : ''; } catch (_error) { serializedMeta = ' [unserializable metadata]'; }
+  const line = `[${stamp()}] ${level} ${scope ? '[' + scope + '] ' : ''}${message}${serializedMeta}`;
   try {
     const dir = resolveLogDir();
     fs.mkdirSync(dir, { recursive: true });

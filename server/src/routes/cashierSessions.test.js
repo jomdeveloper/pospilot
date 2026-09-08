@@ -131,6 +131,33 @@ test('opening float can be entered by denomination count (must match total)', as
   assert.equal(mismatch.status, 400);
 });
 
+test('cashier handover keeps the register session and records each active cashier', async () => {
+  const opened = await openSession(cashierToken, 1000, { terminal: 'POS-HANDOVER' });
+  assert.equal(opened.status, 201);
+  const id = opened.data.session.id;
+
+  const cashierCurrent = await req('GET', '/cashier-sessions/current?terminal=POS-HANDOVER', null, cashierToken);
+  assert.equal(cashierCurrent.status, 200);
+  assert.equal(cashierCurrent.data.session.id, id);
+
+  const managerCurrent = await req('GET', '/cashier-sessions/current?terminal=POS-HANDOVER', null, adminToken);
+  assert.equal(managerCurrent.status, 200);
+  assert.equal(managerCurrent.data.session.id, id);
+
+  const paidIn = await req('POST', `/cashier-sessions/${id}/cash-in`, { amount: 50, reason: 'Handover change', }, adminToken);
+  assert.equal(paidIn.status, 200);
+
+  const detail = await req('GET', `/cashier-sessions/${id}`, null, adminToken);
+  assert.deepEqual(detail.data.activities.map((activity) => activity.username), ['cashier', 'admin']);
+  assert.equal(detail.data.movements.at(-1).actorUsername, 'admin');
+  assert.equal(detail.data.session.cashierUsername, 'cashier');
+
+  const closed = await closeSession(adminToken, id, 1050);
+  assert.equal(closed.status, 200);
+  const afterClose = await req('GET', `/cashier-sessions/${id}`, null, adminToken);
+  assert.ok(afterClose.data.activities.every((activity) => activity.status === 'Ended'));
+});
+
 test('cash in / cash out post to the ledger, update expected cash, and require a reason', async () => {
   const session = await openSession(cashierToken, 1000, { terminal: 'POS-T04' });
   const id = session.data.session.id;
@@ -150,6 +177,10 @@ test('cash in / cash out post to the ledger, update expected cash, and require a
   assert.equal(paidOut.status, 200);
   assert.equal(paidOut.data.session.summary.cashPaidOut, 200);
   assert.equal(paidOut.data.session.summary.expectedCash, 1300);
+
+  const excessiveCashOut = await req('POST', `/cashier-sessions/${id}/cash-out`, { amount: 1300.01, reason: 'Too much cash out' }, cashierToken);
+  assert.equal(excessiveCashOut.status, 400);
+  assert.match(excessiveCashOut.data.error, /cannot exceed the expected drawer cash/i);
 
   const detail = await req('GET', `/cashier-sessions/${id}`, null, cashierToken);
   assert.equal(detail.status, 200);

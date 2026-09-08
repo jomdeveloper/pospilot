@@ -3,7 +3,7 @@ const fs = require('fs');
 const express = require('express');
 const { requireAdministrator } = require('./auth');
 const { auditLog } = require('../audit');
-const { createBackup, listBackups, restoreBackup, safeResolve, testBackupDir } = require('../backup');
+const { createBackup, listBackups, safeResolve, testBackupDir } = require('../backup');
 
 const router = express.Router();
 
@@ -11,6 +11,7 @@ const router = express.Router();
 // only). Used by Settings before persisting the folder.
 router.post('/test-dir', requireAdministrator, (req, res) => {
   const result = testBackupDir(req.body && req.body.dir);
+  auditLog(req, 'Tested backup directory', 'BackupSettings', 'directory', { ok: result.ok }, result.ok ? 'Success' : 'Failed');
   if (!result.ok) return res.status(400).json(result);
   res.json(result);
 });
@@ -37,24 +38,18 @@ router.get('/:name/download', requireAdministrator, (req, res) => {
   if (!filePath || !fs.existsSync(filePath)) {
     return res.status(404).json({ error: 'Backup not found' });
   }
+  auditLog(req, 'Downloaded database backup', 'Backup', req.params.name, {});
   res.download(filePath, path.basename(filePath));
 });
 
 // POST /api/backups/:name/restore — restore a database snapshot (admin only)
 router.post('/:name/restore', requireAdministrator, (req, res) => {
-  try {
-    const result = restoreBackup(req.params.name);
-    auditLog(req, 'Restored database backup', 'Backup', result.filename, {
-      source: result.path,
-      safetyFile: result.safetyFile,
-      restoredAt: result.restoredAt,
-    });
-    res.json({ ok: true, backup: { filename: result.filename, path: result.path, restoredAt: result.restoredAt } });
-  } catch (error) {
-    const message = (error && error.message) || 'Unable to restore backup';
-    const status = /Close PosPilot|Could not restore|not found/i.test(message) ? 409 : 500;
-    res.status(status).json({ error: message });
-  }
+  auditLog(req, 'Database restore rejected', 'Backup', req.params.name, {
+    reason: 'Online restore is disabled while the database connection is active',
+  }, 'Rejected');
+  return res.status(409).json({
+    error: 'Close PosPilot and run the offline restore script to restore this backup safely.',
+  });
 });
 
 module.exports = router;

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { CheckCheck, CircleDashed, ShieldAlert, Search, XCircle } from "lucide-react";
 import Card from "../components/ui/Card";
 import Badge from "../components/ui/Badge";
@@ -14,7 +14,7 @@ export default function ApprovalsPage({ t, sessionToken, loggedInRole }) {
   const [reviewDrafts, setReviewDrafts] = useState({});
   const canReview = ["administrator", "admin", "manager"].includes(String(loggedInRole || "").trim().toLowerCase());
 
-  const loadRequests = () => {
+  const loadRequests = useCallback(() => {
     if (!sessionToken) {
       setLoading(false);
       return;
@@ -25,11 +25,11 @@ export default function ApprovalsPage({ t, sessionToken, loggedInRole }) {
       .then((response) => setRequests(response.requests || []))
       .catch((requestError) => setError(requestError.message || "Unable to load approval requests."))
       .finally(() => setLoading(false));
-  };
+  }, [sessionToken]);
 
   useEffect(() => {
     loadRequests();
-  }, [sessionToken]);
+  }, [loadRequests]);
 
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase();

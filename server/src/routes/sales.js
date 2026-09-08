@@ -9,6 +9,21 @@ const router = express.Router();
 
 const SENIOR_PWD_DISCOUNT_RATE = 0.2; // 20% per R.A. 9994 / Magna Carta for PWDs
 const VAT_RATE = 0.12; // 12% output VAT (R.A. 8424 as amended) — shelf prices are VAT-inclusive
+const TAX_TYPES = new Set(['VATABLE', 'VAT_EXEMPT', 'EXEMPT', 'ZERO_RATED', 'NON_VAT']);
+
+function normalizeTaxType(taxType) {
+  const value = String(taxType || 'VATABLE').trim().toUpperCase();
+  if (value === 'VAT_EXEMPT') return 'EXEMPT';
+  return TAX_TYPES.has(value) ? value : 'VATABLE';
+}
+
+function normalizeCustomerType(customerType) {
+  const value = String(customerType || 'walkin').trim().toLowerCase();
+  if (value === 'member') return 'member';
+  if (value === 'senior') return 'senior';
+  if (value === 'pwd') return 'pwd';
+  return 'walkin';
+}
 
 function createAutoApprovalRequest(req, payload) {
   const details = payload.details && typeof payload.details === 'object' ? payload.details : {};
@@ -41,6 +56,88 @@ function splitVat(inclusive) {
   return { vat, vatable: roundMoney(inclusive - vat) };
 }
 
+function calculateTaxLine({ grossAmount, taxType, customerType = 'walkin', memberDiscountPct = 0, otherDiscountPct = 0, seniorOrPwdEligible = false }) {
+  const normalizedType = normalizeTaxType(taxType);
+  const normalizedCustomerType = normalizeCustomerType(customerType);
+  const validGrossAmount = roundMoney(Number.isFinite(grossAmount) ? grossAmount : 0);
+  let discountType = 'NONE';
+  let discountBase = 0;
+  let discountAmount = 0;
+  let discountedBase = validGrossAmount;
+  let vatExclusiveAmount = 0;
+  let vatAmount = 0;
+  let vatableSales = 0;
+  let vatExemptSales = 0;
+  let zeroRatedSales = 0;
+  let nonVatSales = 0;
+
+  const memberDiscount = normalizedCustomerType === 'member' ? Math.max(0, Number(memberDiscountPct) || 0) : 0;
+  const otherDiscount = normalizedCustomerType !== 'member' ? Math.max(0, Number(otherDiscountPct) || 0) : 0;
+
+  if (normalizedCustomerType === 'senior' || normalizedCustomerType === 'pwd') {
+    if (seniorOrPwdEligible && (normalizedType === 'VATABLE' || normalizedType === 'EXEMPT')) {
+      discountType = normalizedCustomerType === 'senior' ? 'SENIOR_CITIZEN' : 'PWD';
+      const vatExclusive = roundMoney(validGrossAmount / (1 + VAT_RATE));
+      discountBase = vatExclusive;
+      const lineDiscount = roundMoney(vatExclusive * SENIOR_PWD_DISCOUNT_RATE);
+      discountAmount = lineDiscount;
+      discountedBase = roundMoney(vatExclusive - lineDiscount);
+      vatExemptSales = discountedBase;
+      vatAmount = 0;
+      vatableSales = 0;
+      return {
+        taxType: normalizedType,
+        discountType,
+        discountBase,
+        discountAmount,
+        vat: 0,
+        vatableSales: 0,
+        vatExemptSales,
+        zeroRatedSales: 0,
+        nonVatSales: 0,
+        lineTotal: discountedBase,
+      };
+    }
+  }
+
+  if (memberDiscount > 0) {
+    discountType = 'MEMBER';
+    discountBase = validGrossAmount;
+    discountAmount = roundMoney(validGrossAmount * (memberDiscount / 100));
+    discountedBase = roundMoney(validGrossAmount - discountAmount);
+  } else if (otherDiscount > 0) {
+    discountType = 'OTHER';
+    discountBase = validGrossAmount;
+    discountAmount = roundMoney(validGrossAmount * (otherDiscount / 100));
+    discountedBase = roundMoney(validGrossAmount - discountAmount);
+  }
+
+  if (normalizedType === 'VATABLE') {
+    vatExclusiveAmount = roundMoney(discountedBase / (1 + VAT_RATE));
+    vatAmount = roundMoney(discountedBase - vatExclusiveAmount);
+    vatableSales = vatExclusiveAmount;
+  } else if (normalizedType === 'EXEMPT') {
+    vatExemptSales = discountedBase;
+  } else if (normalizedType === 'ZERO_RATED') {
+    zeroRatedSales = discountedBase;
+  } else if (normalizedType === 'NON_VAT') {
+    nonVatSales = discountedBase;
+  }
+
+  return {
+    taxType: normalizedType,
+    discountType,
+    discountBase,
+    discountAmount,
+    vat: vatAmount,
+    vatableSales,
+    vatExemptSales,
+    zeroRatedSales,
+    nonVatSales,
+    lineTotal: discountedBase,
+  };
+}
+
 /**
  * Server-authoritative checkout:
  *  - validates every line against the products table,
@@ -60,6 +157,7 @@ router.post('/', authenticate, (req, res) => {
 
   const customerType = String(body.customerType || 'Walk-in').trim().toLowerCase();
   const isSeniorOrPwd = customerType === 'senior' || customerType === 'pwd';
+  const deferredApprovals = [];
 
   const settings = getSettings();
   // Cashier price overrides are capped: a line may only be sold within N percent
@@ -80,6 +178,7 @@ router.post('/', authenticate, (req, res) => {
     const productId = Number(raw.productId ?? raw.product_id ?? raw.id);
     const qty = Number(raw.qty ?? raw.quantity);
     const discPct = Number(raw.discPct ?? raw.discountPct ?? raw.percentDiscount ?? 0);
+    const memberLineDiscountPct = Number(raw.memberDiscountPct ?? raw.member_discount_pct ?? raw.memberDiscount ?? 0);
 
     if (!Number.isInteger(productId) || productId <= 0 || !Number.isInteger(qty) || qty < 1 || qty > 100000) {
       return res.status(400).json({ error: 'Each item needs a valid product id and quantity' });
@@ -109,7 +208,7 @@ router.post('/', authenticate, (req, res) => {
         });
       }
       if (priceOverrideApprovalPct > 0 && pctAbove >= priceOverrideApprovalPct) {
-        createAutoApprovalRequest(req, {
+        deferredApprovals.push({
           type: 'price_override',
           title: `Price override for ${product.name}`,
           reason: `Cashier requested a ${pctAbove.toFixed(1)}% price increase above catalog for ${product.name}.`,
@@ -125,7 +224,7 @@ router.post('/', authenticate, (req, res) => {
     }
 
     if (discPct > 0 && discountApprovalPct > 0 && discPct >= discountApprovalPct) {
-      createAutoApprovalRequest(req, {
+      deferredApprovals.push({
         type: 'discount_override',
         title: `Discount override for ${product.name}`,
         reason: `Cashier applied a ${discPct}% line discount on ${product.name}.`,
@@ -139,17 +238,19 @@ router.post('/', authenticate, (req, res) => {
     }
 
     const lineSubtotal = roundMoney(qty * unitPrice);
-    const lineDiscount = roundMoney(lineSubtotal * (discPct / 100));
-    const discountedInclusive = roundMoney(lineSubtotal - lineDiscount);
-    const { vat: lineVat, vatable: lineVatable } = splitVat(discountedInclusive);
+    const effectiveMemberDiscountPct = customerType === 'member' ? (memberLineDiscountPct || discPct) : 0;
+    const taxType = normalizeTaxType(product.tax_type);
     const eligible =
       isSeniorOrPwd &&
       (customerType === 'senior' ? Boolean(product.senior_discount_eligible) : Boolean(product.pwd_discount_eligible));
-    // The statutory 20% is computed on the VAT-EXCLUSIVE amount, exactly like
-    // the printed receipt ("TOTAL − VAT = VATABLE, 20% of VATABLE"). This keeps
-    // the recorded grand_total and the printed AMOUNT DUE identical.
-    const customerDiscount = eligible ? roundMoney(lineVatable * SENIOR_PWD_DISCOUNT_RATE) : 0;
-    const lineTotal = roundMoney(discountedInclusive - customerDiscount);
+    const taxLine = calculateTaxLine({
+      grossAmount: lineSubtotal,
+      taxType,
+      customerType,
+      memberDiscountPct: effectiveMemberDiscountPct,
+      otherDiscountPct: customerType !== 'member' ? discPct : 0,
+      seniorOrPwdEligible: eligible,
+    });
 
     // Stock is NOT a hard gate on the POS. The cashier scans/visually verifies
     // the physical product, so a sale is allowed to go ahead even when the
@@ -158,24 +259,26 @@ router.post('/', authenticate, (req, res) => {
     // Adjustment screen when the physical counts are corrected. Serial numbers
     // are a secondary, possibly-incomplete ledger and never block a sale.
 
-    lines.push({ stream: { product, qty, unitPrice, originalUnitPrice: Number(product.price), lineSubtotal, lineDiscount, lineVat, discPct, customerDiscount, lineTotal } });
+    lines.push({ stream: { product, qty, unitPrice, originalUnitPrice: Number(product.price), lineSubtotal, lineDiscount: 0, discPct, memberDiscountPct: effectiveMemberDiscountPct, ...taxLine } });
   }
 
   const subtotal = roundMoney(lines.reduce((sum, line) => sum + line.stream.lineSubtotal, 0));
-  const itemDiscountTotal = roundMoney(lines.reduce((sum, line) => sum + line.stream.lineDiscount, 0));
-  const seniorPwdDiscountTotal = roundMoney(lines.reduce((sum, line) => sum + line.stream.customerDiscount, 0));
-  const discountTotal = roundMoney(itemDiscountTotal + seniorPwdDiscountTotal);
-  // Record VAT instead of zeroing it so the database matches the receipt's
-  // "Less: VAT" / "VATABLE SALES" breakdown. Vatable = subtotal − item
-  // discounts − VAT (the discounted selling amount net of VAT).
-  const vat = roundMoney(lines.reduce((sum, line) => sum + line.stream.lineVat, 0));
-  const vatable = roundMoney(subtotal - itemDiscountTotal - vat);
-  const grandTotal = roundMoney(Math.max(subtotal - discountTotal, 0));
+  const itemDiscountTotal = roundMoney(lines.reduce((sum, line) => sum + (line.stream.discountType === 'OTHER' ? line.stream.discountAmount : 0), 0));
+  const seniorPwdDiscountTotal = roundMoney(lines.reduce((sum, line) => sum + (line.stream.discountType === 'SENIOR_CITIZEN' || line.stream.discountType === 'PWD' ? line.stream.discountAmount : 0), 0));
+  const memberDiscountTotal = roundMoney(lines.reduce((sum, line) => sum + (line.stream.discountType === 'MEMBER' ? line.stream.discountAmount : 0), 0));
+  const discountTotal = roundMoney(itemDiscountTotal + seniorPwdDiscountTotal + memberDiscountTotal);
+  const vat = roundMoney(lines.reduce((sum, line) => sum + line.stream.vat, 0));
+  const vatableSales = roundMoney(lines.reduce((sum, line) => sum + line.stream.vatableSales, 0));
+  const vatExemptSales = roundMoney(lines.reduce((sum, line) => sum + line.stream.vatExemptSales, 0));
+  const zeroRatedSales = roundMoney(lines.reduce((sum, line) => sum + line.stream.zeroRatedSales, 0));
+  const nonVatSales = roundMoney(lines.reduce((sum, line) => sum + line.stream.nonVatSales, 0));
+  const vatable = vatableSales;
+  const grandTotal = roundMoney(Math.max(lines.reduce((sum, line) => sum + line.stream.lineTotal, 0), 0));
 
   const paymentType = String(body.paymentType || body.method || 'cash').trim() || 'cash';
 
   if (cashApprovalThreshold > 0 && grandTotal >= cashApprovalThreshold) {
-    createAutoApprovalRequest(req, {
+    deferredApprovals.push({
       type: 'cash_exception',
       title: 'Cash transaction above approval threshold',
       reason: `Transaction total reached ${grandTotal} which exceeds the configured cash approval threshold of ${cashApprovalThreshold}.`,
@@ -202,12 +305,25 @@ router.post('/', authenticate, (req, res) => {
     return res.status(400).json({ error: 'Invalid cashier session' });
   }
   let cashierSessionId = rawSessionId;
+    let cashierActivity;
+  const role = String(req.session?.role || '').trim().toLowerCase();
+  if (cashierSessionId === null && role === 'cashier') {
+    return res.status(400).json({ error: 'An open cashier register session is required' });
+  }
   if (cashierSessionId !== null) {
-    const sessionRow = db.prepare('SELECT id, status, session_ref FROM cashier_sessions WHERE id = ?').get(cashierSessionId);
+    const sessionRow = db.prepare('SELECT id, status, session_ref, cashier_user_id, cashier_username FROM cashier_sessions WHERE id = ?').get(cashierSessionId);
     if (!sessionRow) return res.status(400).json({ error: 'Cashier session not found' });
     if (sessionRow.status !== 'Open') {
       return res.status(400).json({ error: 'Cashier session is already closed — cannot post sales to it' });
     }
+    const role = String(req.session?.role || '').trim().toLowerCase();
+    if (role === 'cashier' && !db.prepare(
+      `SELECT 1 FROM register_cashier_activity
+       WHERE cashier_session_id = ? AND user_id = ? AND status = 'Active'`
+    ).get(cashierSessionId, req.session.userId)) {
+      return res.status(403).json({ error: 'You are not assigned to this register session' });
+    }
+      cashierActivity = require('../cashDrawer').ensureCashierActivity(sessionRow, req.session.userId, req.session.username);
   }
 
   // Cash portion that physically lands in the drawer. Non-cash tenders do NOT
@@ -264,6 +380,16 @@ router.post('/', authenticate, (req, res) => {
 
   const customerName = String(body.customer || 'Walk-in Customer').trim() || 'Walk-in Customer';
   const memberId = String(body.memberId || '').trim() || null;
+  const customerId = String(body.customerId || memberId || '').trim() || null;
+  const transactionDiscountType = lines.some((line) => line.stream.discountType === 'SENIOR_CITIZEN')
+    ? 'SENIOR_CITIZEN'
+    : lines.some((line) => line.stream.discountType === 'PWD')
+      ? 'PWD'
+      : lines.some((line) => line.stream.discountType === 'MEMBER')
+        ? 'MEMBER'
+        : lines.some((line) => line.stream.discountType === 'OTHER')
+          ? 'OTHER'
+          : 'NONE';
   const transactionId = String(body.transactionId || '').trim() || `TX-SALE-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
   // Idempotent replay: if the same invoice number / transaction ref was already
@@ -272,7 +398,40 @@ router.post('/', authenticate, (req, res) => {
   // money math and stock are ONLY applied on the first (successful) commit.
   const existingByRef = db.prepare('SELECT id FROM sales WHERE transaction_ref = ?').get(transactionId);
   if (existingByRef) {
-    return res.status(200).json({ ok: true, id: existingByRef.id, duplicate: true });
+    const existing = db.prepare('SELECT * FROM sales WHERE id = ?').get(existingByRef.id);
+    const existingItems = db.prepare('SELECT * FROM sale_items WHERE sale_id = ? ORDER BY id ASC').all(existing.id);
+    return res.status(200).json({
+      ok: true,
+      duplicate: true,
+      id: existing.id,
+      transactionId: existing.transaction_ref,
+      customer: existing.customer,
+      customerType: existing.customer_type,
+      customerId: existing.member_id,
+      memberId: existing.member_id,
+      subtotal: Number(existing.subtotal),
+      discountTotal: Number(existing.discount_total),
+      vat: Number(existing.vat),
+      vatable: Number(existing.vatable_sales),
+      vatableSales: Number(existing.vatable_sales),
+      vatExemptSales: Number(existing.vat_exempt_sales),
+      zeroRatedSales: Number(existing.zero_rated_sales),
+      nonVatSales: Number(existing.non_vat_sales),
+      grandTotal: Number(existing.grand_total),
+      cashReceived: Number(existing.cash_received),
+      changeDue: Number(existing.change_due),
+      cashAmount: Number(existing.cash_amount),
+      cashierSessionId: existing.cashier_session_id,
+      paymentType: existing.payment_type,
+      createdAt: existing.created_at,
+      items: existingItems.map((item) => ({
+        ...item,
+        unitPrice: Number(item.price),
+        lineTotal: Number(item.total),
+        customerDiscount: Number(item.customer_discount || 0),
+        taxType: item.tax_type,
+      })),
+    });
   }
 
   const recordSale = db.transaction(() => {
@@ -284,18 +443,18 @@ router.post('/', authenticate, (req, res) => {
     }
     const result = db
       .prepare(
-          `INSERT INTO sales (transaction_ref, customer, member_id, subtotal, discount_total, vat, grand_total, cash_received, change_due, payment_type, cashier_session_id, cash_amount, split_payments_json)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          `INSERT INTO sales (transaction_ref, customer, customer_type, member_id, discount_type, subtotal, discount_total, vat, vatable_sales, vat_exempt_sales, zero_rated_sales, non_vat_sales, grand_total, cash_received, change_due, payment_type, cashier_session_id, cashier_user_id, cashier_username, cash_amount, split_payments_json)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
-        .run(transactionId, customerName, memberId, subtotal, discountTotal, vat, grandTotal, cashReceived, changeDue, paymentType.toLowerCase(), cashierSessionId, cashAmount, splitJson);
+        .run(transactionId, customerName, customerType, customerId, transactionDiscountType, subtotal, discountTotal, vat, vatableSales, vatExemptSales, zeroRatedSales, nonVatSales, grandTotal, cashReceived, changeDue, paymentType.toLowerCase(), cashierSessionId, req.session.userId, req.session.username, cashAmount, splitJson);
     const saleId = result.lastInsertRowid;
     if (cashierSessionId !== null) {
       require('../cashDrawer').refreshSessionTotals(cashierSessionId);
     }
 
     const insertItem = db.prepare(
-      `INSERT INTO sale_items (sale_id, product_id, name, qty, price, disc_pct, discount, total)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO sale_items (sale_id, product_id, name, qty, price, disc_pct, discount, total, tax_type, discount_type, vat, vatable_sales, vat_exempt_sales, zero_rated_sales, non_vat_sales, customer_discount)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     );
     const decrementStock = db.prepare('UPDATE products SET stock = stock - ? WHERE id = ?');
     const getBatches = db.prepare(
@@ -311,8 +470,8 @@ router.post('/', authenticate, (req, res) => {
     const insertMovement = db.prepare(`INSERT INTO inventory_movements (movement_type, product_id, quantity, from_location_id, reason, reference, actor_user_id, actor_username) VALUES ('Sale', ?, ?, ?, 'Point of Sale transaction', ?, ?, ?)`);
 
     lines.forEach(({ stream: line }) => {
-      const { product, qty, unitPrice, lineDiscount, discPct, customerDiscount, lineTotal } = line;
-      insertItem.run(saleId, product.id, product.name, qty, unitPrice, discPct, lineDiscount + customerDiscount, lineTotal);
+      const { product, qty, unitPrice, lineDiscount, discPct, discountType, discountAmount, lineTotal, taxType, vat, vatableSales, vatExemptSales, zeroRatedSales, nonVatSales } = line;
+      insertItem.run(saleId, product.id, product.name, qty, unitPrice, discPct, lineDiscount + discountAmount, lineTotal, taxType, discountType, vat, vatableSales, vatExemptSales, zeroRatedSales, nonVatSales, discountAmount);
 
       if (product.track_inventory) {
         ensureMainStock.run(mainLocationId, product.id);
@@ -357,11 +516,19 @@ router.post('/', authenticate, (req, res) => {
         .filter(({ stream: line }) => line.unitPrice !== line.originalUnitPrice)
         .map(({ stream: line }) => ({ productId: line.product.id, originalPrice: line.originalUnitPrice, overridePrice: line.unitPrice })),
     });
+      if (cashierActivity?.created) {
+        auditLog(req, 'Cashier activity started', 'CashierActivity', cashierActivity.activity.id, {
+          cashierSessionId,
+          reason: 'sale',
+        });
+      }
 
     return {
       id: saleId,
       transactionId,
       customer: customerName,
+      customerType,
+      customerId,
       memberId,
       subtotal,
       itemDiscountTotal,
@@ -369,17 +536,23 @@ router.post('/', authenticate, (req, res) => {
       discountTotal,
       vat,
       vatable,
+      vatableSales,
+      vatExemptSales,
+      zeroRatedSales,
+      nonVatSales,
       grandTotal,
       cashReceived,
       changeDue,
       cashAmount,
       cashierSessionId,
       paymentType: paymentType.toLowerCase(),
+      createdAt: db.prepare('SELECT created_at FROM sales WHERE id = ?').get(saleId).created_at,
     };
   });
 
   try {
     const sale = recordSale();
+    deferredApprovals.forEach((approval) => createAutoApprovalRequest(req, approval));
     res.status(201).json({ ok: true, ...sale, items: lines.map((line) => line.stream) });
   } catch (error) {
     if (error.message && (error.message.startsWith('Insufficient stock') || error.message.startsWith('Insufficient batch stock'))) {
@@ -401,7 +574,7 @@ router.get('/', authenticate, (req, res) => {
   res.json(rows);
 });
 
-// GET /api/sales/counter — the next sequential transaction number (SI-######)
+// GET /api/sales/counter — the next sequential transaction number (SI-11 digits)
 // derived from the most recent SI-prefixed sale in the database. Kept above
 // /:id so the literal path is matched before the parameter route.
 // Only SI-###### refs from the POS are counted; admin/back-office sales use
@@ -450,6 +623,12 @@ router.post('/:id/void', authenticate, (req, res) => {
     const result = db.transaction(() => {
       const sale = db.prepare('SELECT * FROM sales WHERE id = ?').get(saleId);
       if (!sale) throw Object.assign(new Error('Sale not found'), { status: 404 });
+      if (sale.cashier_session_id) {
+        const linkedSession = db.prepare('SELECT status FROM cashier_sessions WHERE id = ?').get(sale.cashier_session_id);
+        if (linkedSession && linkedSession.status !== 'Open') {
+          throw Object.assign(new Error('Closed cashier sessions cannot be voided'), { status: 400 });
+        }
+      }
       if (sale.status === 'VOIDED') throw Object.assign(new Error('This transaction has already been voided.'), { status: 409 });
       if (sale.status !== 'COMPLETED') {
         throw Object.assign(new Error('Only completed transactions can be voided.'), { status: 409 });
@@ -505,9 +684,18 @@ router.post('/:id/return', authenticate, (req, res) => {
   if (!sale) return res.status(404).json({ error: 'Sale not found' });
   if (sale.status === 'VOIDED') return res.status(409).json({ error: 'Voided transactions cannot be refunded.' });
   if (sale.status === 'FULLY_REFUNDED') return res.status(409).json({ error: 'This transaction has already been fully refunded.' });
+  if (sale.cashier_session_id) {
+    const linkedSession = db.prepare('SELECT status FROM cashier_sessions WHERE id = ?').get(sale.cashier_session_id);
+    if (linkedSession && linkedSession.status !== 'Open') {
+      return res.status(400).json({ error: 'Closed cashier sessions cannot be refunded' });
+    }
+  }
   const refundMethod = String(req.body?.refundMethod || 'cash').trim().toLowerCase();
   if (!['cash', 'card', 'gcash', 'maya', 'bank', 'credit', 'other'].includes(refundMethod)) {
     return res.status(400).json({ error: 'Unsupported refund method' });
+  }
+  if (refundMethod === 'cash' && Number(sale.cash_amount || 0) <= 0) {
+    return res.status(400).json({ error: 'Cash refunds require a sale that received cash' });
   }
   const items = rawItems.map((item) => ({ itemId: Number(item.itemId), quantity: Number(item.quantity) }));
   if (items.some((item) => !Number.isInteger(item.itemId) || !Number.isInteger(item.quantity) || item.quantity < 1)) return res.status(400).json({ error: 'Each return item needs a valid quantity' });

@@ -8,10 +8,9 @@
  * same thing.
  */
 import { formatPeso, roundMoney } from "./calculations";
-import { CASHIER, PHARMACY } from "../data/storeConfig";
-import { customerTypeLabel } from "../data/customerTypes";
+import { CASHIER, COUNTER, PHARMACY } from "../data/storeConfig";
 
-const W = 32; // chars per line (58mm receipt)
+const TAX_LABELS = { VATABLE: "V", EXEMPT: "E", ZERO_RATED: "Z", NON_VAT: "N" };
 
 let invoiceSeq = 0;
 
@@ -23,7 +22,7 @@ function dateLineOf(date) {
   let hh = d.getHours();
   const ampm = hh >= 12 ? "PM" : "AM";
   hh = hh % 12 || 12;
-  return `${pad(d.getMonth() + 1)}/${pad(d.getDate())}/${d.getFullYear()}  ${hh}:${pad(d.getMinutes())} ${ampm}`;
+  return `${pad(d.getMonth() + 1)}/${pad(d.getDate())}/${d.getFullYear()} ${hh}:${pad(d.getMinutes())} ${ampm}`;
 }
 
 /**
@@ -39,7 +38,7 @@ export function setInvoiceCounter(nextNumber) {
 /** Return the next invoice number for this session. */
 export function nextInvoiceNo() {
   invoiceSeq += 1;
-  return "SI-" + String(invoiceSeq).padStart(6, "0");
+  return "SI-" + String(invoiceSeq).padStart(11, "0");
 }
 
 /** Build the plain-text ESC/POS lines for a receipt `data` object.
@@ -49,13 +48,16 @@ export function nextInvoiceNo() {
  * exactly what was recorded in the database — the VAT split and the 20% base
  * are identical on both sides.
  */
-export function buildReceiptLines(data) {
+export function buildReceiptLines(data, configuredWidth = 42) {
+  const W = Math.max(16, Number(configuredWidth) || 42);
   const {
     subtotal = 0,
-    itemDiscount = 0,
     seniorDiscount = 0,
     vat = 0,
     vatable = 0,
+    vatableSales = vatable,
+    vatExemptSales = 0,
+    zeroRatedSales = 0,
     grandTotal = 0,
     method = "cash",
     tendered = 0,
@@ -63,15 +65,30 @@ export function buildReceiptLines(data) {
     customer = null,
     customerType = "walkin",
     customerId = "",
+    cashier = CASHIER,
+    gcashReference = "",
     invoiceNo
   } = data;
 
-  const isCash = method === "cash";
+  const normalizedCustomerType = String(customerType || "walkin").trim().toLowerCase();
+  const isCash = String(method || "cash").trim().toLowerCase() === "cash";
   // Senior Citizen & PWD sales both get the statutory 20% discount.
-  const isDiscountCustomer = customerType === "senior" || customerType === "pwd";
-  const discountLabel =
-    customerType === "senior" ? "Senior Citizen Discount" : "PWD Discount";
-  const custIdLabel = customerType === "senior" ? "SC ID No." : "PWD ID No.";
+  const isDiscountCustomer = normalizedCustomerType === "senior" || normalizedCustomerType === "pwd";
+  const discountLabel = normalizedCustomerType === "senior" ? "Senior Citizen Discount" : "PWD Discount";
+  const customerLabel = normalizedCustomerType === "senior" ? "Senior Citizen" : "PWD";
+  const customerIdLabel = normalizedCustomerType === "senior" ? "SC ID No." : "PWD ID No.";
+  const paymentMethodLabel = {
+    cash: "Cash",
+    gcash: "GCash",
+    maya: "Maya",
+    card: "Card",
+    bank: "Bank",
+    credit: "Credit",
+    other: "Other"
+  }[String(method || "cash").trim().toLowerCase()] || String(method || "Cash");
+  const receiptInvoiceNo = `SI# ${String(invoiceNo || "").replace(/\D/g, "").padStart(11, "0")}`;
+  const storeTin = String(PHARMACY.tin || "").replace(/^TIN\s*:\s*/i, "");
+  const itemCount = (data.lines || []).reduce((total, item) => total + (Number(item.qty) || 0), 0);
 
   // The authoritative change for cash comes from grandTotal, exactly like the
   // server: CHANGE = tendered − AMOUNT DUE.
@@ -90,54 +107,57 @@ export function buildReceiptLines(data) {
   };
 
   const out = [];
-  // Header — ALWAYS from store settings (never hard-coded). The store name is
-  // the primary line; any tagline / phone / website / footer add branding.
   out.push(center(PHARMACY.name, true));
-  if (PHARMACY.tagline) out.push(center(PHARMACY.tagline));
-  if (PHARMACY.branchName) out.push(center(`${PHARMACY.branchName}${PHARMACY.branchCode ? " \u00b7 " + PHARMACY.branchCode : ""}`));
   if (PHARMACY.address) out.push(center(PHARMACY.address));
-  const contactBits = [PHARMACY.phone, PHARMACY.email].filter(Boolean);
-  if (contactBits.length) out.push(center(contactBits.join(" \u00b7 ")));
-  if (PHARMACY.tin) out.push(center(PHARMACY.tin));
+  if (storeTin) out.push(center(`VAT Reg. TIN: ${storeTin}`));
   out.push(center("SALES INVOICE", true));
+  out.push(center(receiptInvoiceNo));
+  out.push(center(`POS-${COUNTER} : ${dateLineOf(date)}`));
+  out.push(center(`Cashier: ${cashier}`));
   out.push(dash());
-  out.push(line(`Transaction No.: ${invoiceNo || ""}`));
-  out.push(line(dateLineOf(date)));
-  out.push(line(`Cashier: ${CASHIER}`));
-  out.push(line(`Customer: ${customer || "Walk-in"}${customerType !== "walkin" ? ` (${customerTypeLabel(customerType)})` : ""}`));
+  out.push(row("ITEM", "AMOUNT", true));
   out.push(dash());
-  out.push(row("ITEM", "AMT", true));
   for (const it of data.lines || []) {
-    out.push(line(String(it.name).slice(0, W)));
-    out.push(row(`${it.qty} x ${formatPeso(it.price)}`, formatPeso(it.net)));
+    const taxCode = TAX_LABELS[String(it.taxType || it.tax_type || "VATABLE").toUpperCase()] || "V";
+    out.push(line(`${String(it.name).slice(0, Math.max(1, W - 4))} (${taxCode})`));
+    out.push(row(`  ${it.qty} x ${formatPeso(it.price).replace(/^₱/, "")}`, formatPeso(it.net).replace(/^₱/, "")));
   }
   out.push(dash());
-  out.push(row("TOTAL SALES (VAT INC.)", formatPeso(subtotal)));
-  if (itemDiscount > 0) out.push(row("Less: Discount", `(${formatPeso(itemDiscount)})`));
-  out.push(row("Less: VAT", `(${formatPeso(vat)})`));
-  out.push(row("VATABLE SALES", formatPeso(vatable)));
+  out.push(line(`Total Items: ${itemCount}`));
+  out.push(line(""));
+  out.push(row("Gross Sales", formatPeso(subtotal).replace(/^₱/, ""), true));
+  out.push(row("VATable Sales", formatPeso(vatableSales).replace(/^₱/, "")));
+  out.push(row("VAT (12%)", formatPeso(vat).replace(/^₱/, "")));
+  out.push(row("VAT-Exempt Sales", formatPeso(vatExemptSales).replace(/^₱/, "")));
+  out.push(row("Zero-Rated Sales", formatPeso(zeroRatedSales).replace(/^₱/, "")));
   if (isDiscountCustomer && seniorDiscount > 0) {
-    out.push(line(discountLabel, { bold: true }));
-    out.push(row("Amount", `(${formatPeso(seniorDiscount)})`));
+    out.push(line(""));
+    out.push(row(`${discountLabel} (20%)`, formatPeso(seniorDiscount).replace(/^₱/, "")));
   }
+  out.push(line(""));
+  out.push(row("TOTAL DUE", formatPeso(amountDue), true));
   out.push(dash());
-  out.push(row("AMOUNT DUE", formatPeso(amountDue), true));
+  out.push(line(`Payment Method: ${paymentMethodLabel}`));
+  if (String(method || "").trim().toLowerCase() === "gcash") {
+    out.push(line(`Gcash Reference #: ${gcashReference || "____________________________"}`));
+  }
   if (isCash && tendered > 0) {
-    out.push(row("Cash", formatPeso(tendered)));
-    out.push(row("CHANGE", formatPeso(cashChange), true));
+    out.push(row("Amount Tendered", formatPeso(tendered), true));
+    out.push(row("Change", formatPeso(cashChange), true));
   }
   out.push(dash());
-  out.push(row("VATABLE SALES", formatPeso(vatable)));
-  out.push(row("VAT EXEMPT SALES", "0.00"));
-  out.push(row("ZERO-RATED SALES", "0.00"));
-  out.push(row("VAT", formatPeso(vat)));
   if (isDiscountCustomer) {
+    out.push(line(customerLabel));
+    out.push(line(`${customerIdLabel}: ${customerId || "________________"}`));
+    out.push(line(`Name: ${customer || "_______________________________"}`));
+    out.push(line("Address: ______________________________"));
+    out.push(line("TIN: _________________________________"));
     out.push(dash());
-    out.push(line(`${discountLabel.split(" Discount")[0]} Name: ${customer}`));
-    out.push(line(`${custIdLabel} ${customerId}`));
+    out.push(line(""));
+    out.push(center("Thank you!", true));
+    return out;
   }
-  out.push(dash());
-  // Footer message from store settings (default thanks message).
+  out.push(line(""));
   out.push(center(PHARMACY.receiptFooter || "Thank you!", true));
   return out;
 }
@@ -153,8 +173,15 @@ export async function printReceipt(data) {
     return null;
   }
   try {
+    let width = 42;
+    if (typeof broker.getPrinterConfig === "function") {
+      try {
+        const config = await broker.getPrinterConfig();
+        width = Number(config && config.effective && config.effective.width) || width;
+      } catch (e) { /* use the standard Font B width */ }
+    }
     const res = await broker.printReceipt({
-      lines: buildReceiptLines(data),
+      lines: buildReceiptLines(data, width),
       heightMicrons: 200000 // reasonable default; raw ESC/POS ignores page size
     });
     const which = res && res.mode === "espos" ? "ESC/POS" : res && res.mode === "raster" ? "raster/webContents" : "?";

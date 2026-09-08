@@ -32,6 +32,7 @@ function toPosProduct(row) {
     productType: row.product_type || row.productType || "OTC",
     generic: row.generic || "",
     stock: Number(row.stock) || 0,
+    taxType: String(row.tax_type || row.taxType || "VATABLE").toUpperCase(),
     seniorDiscountEligible: Boolean(row.senior_discount_eligible || row.seniorDiscountEligible),
     pwdDiscountEligible: Boolean(row.pwd_discount_eligible || row.pwdDiscountEligible),
     productId: Number(row.id) || row.id,
@@ -43,13 +44,13 @@ function toPosProduct(row) {
  * @param {string} code - barcode or sku (trimmed).
  * @returns {Promise<object|null>} the matched product or null.
  */
-export async function findProductByCode(code) {
+export async function findProductByCode(code, authToken) {
   const c = String(code || "").trim();
   if (!c) return null;
 
   // 1) Exact barcode lookup in the DB.
   try {
-    const row = await api.getProductByBarcode(c);
+    const row = await api.getProductByBarcode(c, authToken);
     if (row) return toPosProduct(row);
   } catch (err) {
     // 404 = not found by barcode; other errors are handled by the search below.
@@ -58,7 +59,7 @@ export async function findProductByCode(code) {
   // 2) Search the DB for an exact SKU (and a barcode the endpoint above missed
   //    due to case), then return null when the DB genuinely has no match.
   try {
-    const res = await api.searchProducts({ q: c, limit: 20 });
+    const res = await api.searchProducts({ q: c, limit: 20 }, authToken);
     const rows = Array.isArray(res) ? res : ((res && res.items) || []);
     const lower = c.toLowerCase();
     const hit =

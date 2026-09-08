@@ -24,6 +24,7 @@ const ICONS = {
   member: '<rect x="2.5" y="5" width="19" height="14" rx="2.5"/><circle cx="9" cy="11" r="2.5"/><path d="M4.5 17a5 5 0 0 1 9 0"/><path d="M15 9h6M15 12.5h4M17 15h2"/>',
   senior: '<path d="M12 3.5l1.6 3.4 3.7.5-2.7 2.6.7 3.7-3.3-1.8-3.3 1.8.7-3.7-2.7-2.6 3.7-.5z"/><path d="M12 2.8v2"/>',
   help: '<circle cx="12" cy="12" r="9"/><path d="M9.2 9a3 3 0 0 1 5.8 1c0 2-3 1.8-3 4"/><path d="M12 17h.01"/>',
+  warning: '<path d="M12 3.5l9 16H3z"/><path d="M12 9v5M12 17h.01"/>',
   cancel: '<circle cx="12" cy="12" r="9"/><path d="M15 9l-6 6M9 9l6 6"/>',
   clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
   receipt: '<path d="M6 3h12v18l-2-1.5L14 21l-2-1.5L10 21l-2-1.5L6 21z"/><path d="M9 8h6M9 12h6M9 16h4"/>',

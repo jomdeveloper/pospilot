@@ -42,7 +42,7 @@ const DEFINITIONS = {
 export default function CashMovementDialog({ dialog }) {
   const { state, actions, runtime } = usePos();
   const def = DEFINITIONS[dialog.type] || DEFINITIONS.cashIn;
-  const close = () => actions.closeDialog();
+  const close = () => actions.openDialog({ type: "registerActions" });
   const session = state.session;
 
   const [amount, setAmount] = useState("");

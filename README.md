@@ -127,19 +127,19 @@ module.
 
 ## Building the desktop app for real use
 
-1. Build the client's static files:
+1. Ensure `better-sqlite3` is compiled for Electron:
    ```bash
-   npm run build:client
+    npm run rebuild:electron
    ```
-2. Launch Electron in production mode (it loads `client/dist` instead of the
-   Vite dev server, and boots the local server automatically):
-   ```bash
-   npm run dev:electron
-   ```
-3. Create an installer:
+2. Create the Windows installer. This also builds the client:
    ```bash
    npm run build:app
    ```
+
+The packaged installer loads `client/dist` and starts the local API
+automatically. Do not use `npm run dev:electron` as the production launcher;
+that command starts Vite, enables development HTTPS, and exposes the API to the
+LAN for phone testing.
 
 ## Production checklist & behavior
 
@@ -159,6 +159,17 @@ module.
   (`npm run dev:electron` / `npm run dev:phone`) set `HOST=0.0.0.0` explicitly
   because they are opt-in LAN tools. Product catalogue reads require a logged-in
   session.
+- **Production HTTPS.** Never set `NODE_TLS_REJECT_UNAUTHORIZED=0` in
+  production. That setting disables certificate verification and is only used
+  by the self-signed `mkcert` phone-development setup. For production LAN
+  access, use a certificate trusted by every client device, preferably with IIS
+  or nginx terminating HTTPS in front of the API. Restrict port `4000` with the
+  Windows Firewall. For desktop-only use, keep the API on `127.0.0.1`.
+- **Development warnings.** The Chromium `Autofill.enable` and
+  `Autofill.setAddresses` console messages are DevTools noise and do not affect
+  the application. The `util._extend` deprecation warning comes from a
+  development dependency such as `concurrently`; it should be addressed by
+  dependency updates, but is not a production runtime failure.
 - **Automatic backups.** The server snapshots the SQLite database on startup
   and every 6 hours (rolling retention of the newest 20, override with
   `POSPILOT_BACKUP_KEEP`). Administrators can also create or download backups

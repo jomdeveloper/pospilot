@@ -17,11 +17,50 @@ export function roundMoney(n) {
 }
 
 export const VAT_RATE = 0.12; // Philippine output VAT — shelf prices are VAT-inclusive
+export const TAX_TYPES = ["VATABLE", "EXEMPT", "ZERO_RATED", "NON_VAT"];
 
 /** Split a VAT-inclusive amount into its VAT and VAT-exclusive parts. */
 export function splitVat(inclusive) {
   const vat = roundMoney((inclusive * VAT_RATE) / (1 + VAT_RATE));
   return { vat, vatable: roundMoney(inclusive - vat) };
+}
+
+export function calculateTaxLine(grossAmount, taxType, customerType = "walkin", memberDiscountPct = 0, otherDiscountPct = 0, seniorOrPwdEligible = false) {
+  const normalizedType = TAX_TYPES.includes(String(taxType || "").toUpperCase()) ? String(taxType).toUpperCase() : "VATABLE";
+  const normalizedCustomerType = String(customerType || "walkin").toLowerCase();
+  const gross = roundMoney(grossAmount);
+  const seniorDiscountApplies = seniorOrPwdEligible && (normalizedType === "VATABLE" || normalizedType === "EXEMPT");
+  let customerDiscount = 0;
+  let discountedAmount = gross;
+  if (seniorDiscountApplies) {
+    const base = normalizedType === "VATABLE" ? splitVat(gross).vatable : gross;
+    customerDiscount = roundMoney(base * 0.2);
+    discountedAmount = roundMoney(base - customerDiscount);
+  } else if (normalizedCustomerType === "member" && Number(memberDiscountPct) > 0) {
+    customerDiscount = roundMoney(gross * (Number(memberDiscountPct) / 100));
+    discountedAmount = roundMoney(gross - customerDiscount);
+  } else if (normalizedCustomerType !== "member" && Number(otherDiscountPct) > 0) {
+    customerDiscount = roundMoney(gross * (Number(otherDiscountPct) / 100));
+    discountedAmount = roundMoney(gross - customerDiscount);
+  }
+  const base = normalizedType === "VATABLE" ? splitVat(discountedAmount).vatable : discountedAmount;
+  return {
+    taxType: normalizedType,
+    discountType: seniorDiscountApplies
+      ? (normalizedCustomerType === "pwd" ? "PWD" : "SENIOR_CITIZEN")
+      : normalizedCustomerType === "member" && Number(memberDiscountPct) > 0
+        ? "MEMBER"
+        : normalizedCustomerType !== "member" && Number(otherDiscountPct) > 0
+          ? "OTHER"
+          : "NONE",
+    vat: normalizedType === "VATABLE" && !seniorDiscountApplies ? splitVat(discountedAmount).vat : 0,
+    vatableSales: normalizedType === "VATABLE" && !seniorDiscountApplies ? base : 0,
+    vatExemptSales: normalizedType === "EXEMPT" || seniorDiscountApplies ? discountedAmount : 0,
+    zeroRatedSales: normalizedType === "ZERO_RATED" ? discountedAmount : 0,
+    nonVatSales: normalizedType === "NON_VAT" ? discountedAmount : 0,
+    customerDiscount,
+    lineTotal: discountedAmount,
+  };
 }
 
 /**
@@ -63,28 +102,40 @@ export function recomputeTotals(state) {
   let discount = 0;
   let seniorDiscount = 0;
   let vat = 0;
+  let vatableSales = 0;
+  let vatExemptSales = 0;
+  let zeroRatedSales = 0;
+  let nonVatSales = 0;
   let amountDue = 0;
   let itemCount = 0;
 
   state.cart.forEach((line) => {
     const gross = lineGross(line);
-    const disc = lineDiscount(line);
-    const discountedInclusive = roundMoney(gross - disc);
-    const { vat: lineVat, vatable } = splitVat(discountedInclusive);
-
     const eligible =
       isSeniorOrPwd &&
       (customerType === "senior"
         ? Boolean(line.seniorDiscountEligible)
         : Boolean(line.pwdDiscountEligible));
-    // Statutory 20% on the VAT-EXCLUSIVE amount — mirrors the server and the
-    // printed receipt so the till, DB and receipt always agree.
-    const senior = eligible ? roundMoney(vatable * 0.2) : 0;
+    const taxLine = calculateTaxLine(
+      gross,
+      line.taxType || line.tax_type,
+      customerType,
+      customerType === "member" ? (line.memberDiscountPct || line.discountPct || 0) : 0,
+      customerType !== "member" ? (line.discountPct || 0) : 0,
+      eligible
+    );
 
     subtotal += gross;
-    discount += disc;
-    seniorDiscount += senior;
-    vat += lineVat;
+    if (taxLine.discountType === "SENIOR_CITIZEN" || taxLine.discountType === "PWD") {
+      seniorDiscount += taxLine.customerDiscount;
+    } else {
+      discount += taxLine.customerDiscount;
+    }
+    vat += taxLine.vat;
+    vatableSales += taxLine.vatableSales;
+    vatExemptSales += taxLine.vatExemptSales;
+    zeroRatedSales += taxLine.zeroRatedSales;
+    nonVatSales += taxLine.nonVatSales;
     itemCount += Number(line.qty) || 0;
   });
 
@@ -92,28 +143,46 @@ export function recomputeTotals(state) {
   discount = roundMoney(discount);
   seniorDiscount = roundMoney(seniorDiscount);
   vat = roundMoney(vat);
-  const vatable = roundMoney(subtotal - discount - vat);
-  amountDue = roundMoney(subtotal - discount - seniorDiscount);
+  vatableSales = roundMoney(vatableSales);
+  vatExemptSales = roundMoney(vatExemptSales);
+  zeroRatedSales = roundMoney(zeroRatedSales);
+  nonVatSales = roundMoney(nonVatSales);
+  amountDue = roundMoney(state.cart.reduce((sum, line) => {
+    const gross = lineGross(line);
+    const eligible = isSeniorOrPwd && (customerType === "senior" ? Boolean(line.seniorDiscountEligible) : Boolean(line.pwdDiscountEligible));
+    return sum + calculateTaxLine(
+      gross,
+      line.taxType || line.tax_type,
+      customerType,
+      customerType === "member" ? (line.memberDiscountPct || line.discountPct || 0) : 0,
+      customerType !== "member" ? (line.discountPct || 0) : 0,
+      eligible
+    ).lineTotal;
+  }, 0));
 
   state.subtotal = subtotal;
   state.discount = discount;
   state.seniorDiscount = seniorDiscount;
-  state.saved = discount; // "Saved" mirrors the item-level discount applied
+  state.saved = roundMoney(discount + seniorDiscount);
   state.vat = vat;
-  state.vatable = vatable;
+  state.vatable = vatableSales;
+  state.vatableSales = vatableSales;
+  state.vatExemptSales = vatExemptSales;
+  state.zeroRatedSales = zeroRatedSales;
+  state.nonVatSales = nonVatSales;
   state.amountDue = amountDue;
   state.itemCount = itemCount;
 
-  return { subtotal, discount, saved: discount, seniorDiscount, vat, vatable, amountDue, itemCount };
+  return { subtotal, discount, saved: state.saved, seniorDiscount, vat, vatable: vatableSales, vatableSales, vatExemptSales, zeroRatedSales, nonVatSales, amountDue, itemCount };
 }
 
 /**
- * Format a transaction number as an invoice id (SI-000001, SI-000002, …).
+ * Format a transaction number as an invoice id (SI-00000000001, SI-00000000002, …).
  * @param {number} n sequential sale number
  * @returns {string}
  */
 export function formatInvoiceNo(n) {
-  return "SI-" + String(Math.max(1, Number(n) || 1)).padStart(6, "0");
+  return "SI-" + String(Math.max(1, Number(n) || 1)).padStart(11, "0");
 }
 
 /** Extract the numeric transaction counter from an invoice like "SI-000003" → 3. */

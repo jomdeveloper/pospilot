@@ -47,7 +47,7 @@ export const NAV_SECTIONS = [
       { id: "users", label: "Users", icon: UserCog, roles: ["administrator", "admin"] },
       { id: "approvals", label: "Approvals", icon: FileCheck2, roles: ["administrator", "admin", "manager"] },
       { id: "audit", label: "Audit Logs", icon: ShieldCheck, roles: ["administrator", "admin", "auditor"] },
-      { id: "settings", label: "Settings", icon: Settings },
+      { id: "settings", label: "Settings", icon: Settings, roles: ["administrator", "admin", "manager"] },
     ],
   },
 ];

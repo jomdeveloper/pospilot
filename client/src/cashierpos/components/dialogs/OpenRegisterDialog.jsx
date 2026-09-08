@@ -29,7 +29,7 @@ export default function OpenRegisterDialog({ terminal }) {
   const amountRef = useRef(null);
 
   // All hooks before any conditional return (Rules of Hooks).
-  const primary = (e) => amountRef.current && amountRef.current.focus();
+  const primary = () => amountRef.current && amountRef.current.focus();
   useEffect(() => { setTimeout(primary, 30); }, [mode]);
 
   // If a session is already open when this dialog renders (e.g. the app

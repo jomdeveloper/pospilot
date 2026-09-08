@@ -11,7 +11,7 @@
  *   RECEIPT_ESCPOS_ADDRESS = "192.168.1.50" (lan) or "COM5" (bluetooth)
  *   RECEIPT_ESCPOS_PORT     = 9100   (default raw/LPD port for lan)
  *   RECEIPT_ESCPOS_PRINTER_NAME = Windows printer name (for usb)
- *   RECEIPT_ESCPOS_WIDTH   = 32   (chars per line; 58mm≈32, 80mm≈42/48)
+ *   RECEIPT_ESCPOS_WIDTH   = 42   (Font B chars per line on 58mm; 80mm≈42/48)
  *   RECEIPT_ESCPOS_CUT     = 1    (1 = cut paper after print)
  *   RECEIPT_ESCPOS_FEED    = 3    (blank line-feeds before the cut)
  *   RECEIPT_ESCPOS_BAUD    = 9600 (bluetooth serial baud)
@@ -56,7 +56,7 @@ function getConfig() {
     address: String(envOr("RECEIPT_ESCPOS_ADDRESS", "") || ""),
     port: Number(envOr("RECEIPT_ESCPOS_PORT", 9100)),
     printerName: String(envOr("RECEIPT_ESCPOS_PRINTER_NAME", "") || ""),
-    width: Number(envOr("RECEIPT_ESCPOS_WIDTH", 32)),
+    width: Number(envOr("RECEIPT_ESCPOS_WIDTH", 42)) || 42,
     cut: boolOf(envOr("RECEIPT_ESCPOS_CUT", true)),
     feedLines: Number(envOr("RECEIPT_ESCPOS_FEED", 3)),
     baud: Number(envOr("RECEIPT_ESCPOS_BAUD", 9600)),
@@ -315,7 +315,12 @@ async function printReceiptLines(lines, cfg) {
     return { ok: false, printer: describePrinter(cfg), reason: "not-configured" };
   }
   const width = Math.max(16, cfg.width);
-  const parts = [Buffer.from([0x1b, 0x40])]; // ESC @ — initialise printer
+  const parts = [
+    Buffer.from([0x1b, 0x40]),       // ESC @ — initialise printer
+    Buffer.from([0x1b, 0x21, 0x01]), // ESC ! 1 — Font B, normal width/height
+    Buffer.from([0x1d, 0x21, 0x00]), // GS ! 0 — standard 1x width and 1x height
+    Buffer.from([0x1b, 0x61, 0x00])  // ESC a 0 — left alignment
+  ];
   for (const l of lines || []) parts.push(encodeLine(l, width, cfg));
   // Feed enough blank lines that the last printed line clears the paper, so
   // the cut doesn't slice through it.

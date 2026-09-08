@@ -82,6 +82,11 @@ export default function TransactionTable() {
           <tbody>
             {state.cart.map((line, index) => {
               const discAmt = lineDiscount(line);
+              const discountCustomer = state.customerType === "senior" || state.customerType === "pwd";
+              const discountLabel = state.customerType === "senior" ? "Senior discount" : "PWD discount";
+              const discountEligible = state.customerType === "senior"
+                ? Boolean(line.seniorDiscountEligible)
+                : Boolean(line.pwdDiscountEligible);
               const rowClass =
                 "tx-row" +
                 (state.selectedIndex === index ? " is-selected" : "") +
@@ -91,6 +96,11 @@ export default function TransactionTable() {
                   <td className="tx-row__item">
                     <span className="tx-row__name">{line.name}</span>
                     <span className="tx-row__sku">{line.sku}</span>
+                    {discountCustomer && (
+                      <span className={"tx-row__eligibility " + (discountEligible ? "is-eligible" : "is-ineligible")}>
+                        {discountLabel} {discountEligible ? "eligible" : "not eligible"}
+                      </span>
+                    )}
                   </td>
                   <td className="tx-row__qty-cell">
                     <span className="qty-val">{line.qty}</span>

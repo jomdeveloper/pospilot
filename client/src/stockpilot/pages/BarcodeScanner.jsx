@@ -1,11 +1,13 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Barcode, Package, RefreshCw } from "lucide-react";
 import { BrowserMultiFormatReader } from "@zxing/browser";
 import Card from "../components/ui/Card";
 import Button from "../components/ui/Button";
 import { api } from "../../api";
 
-export default function BarcodeScannerPage({ t, sessionToken }) {
+const SAME_BARCODE_COOLDOWN_MS = 2500;
+
+export default function BarcodeScannerPage({ t }) {
   const [error, setError] = useState("");
   const [cameraStatus, setCameraStatus] = useState("idle");
   const scanningRef = useRef(false);
@@ -19,44 +21,48 @@ export default function BarcodeScannerPage({ t, sessionToken }) {
   const streamRef = useRef(null);
   const zxingControlsRef = useRef(null);
   const animationRef = useRef(null);
-  const lastDetectedRef = useRef({ value: "", at: 0 });
+  const lastDetectedRef = useRef({ value: "", at: 0, armed: true });
+  const lastPublishedRef = useRef({ value: "", at: 0 });
   const detectionResetRef = useRef(null);
   const cameraStatusResetRef = useRef(null);
 
-  const showCameraStatus = (status) => {
+  const showCameraStatus = useCallback((status) => {
     setCameraStatus(status);
     if (cameraStatusResetRef.current) window.clearTimeout(cameraStatusResetRef.current);
     cameraStatusResetRef.current = window.setTimeout(() => {
       setCameraStatus("idle");
       cameraStatusResetRef.current = null;
     }, 1000);
-  };
+  }, []);
 
-  const acceptDetectedBarcode = (value) => {
+  const acceptDetectedBarcode = useCallback((value) => {
     const now = Date.now();
     const lastDetected = lastDetectedRef.current;
-    if (lastDetected.value === value) return false;
-    lastDetectedRef.current = { value, at: now };
+    if (lastDetected.value === value && !lastDetected.armed) return false;
+    lastDetectedRef.current = { value, at: now, armed: false };
     if (detectionResetRef.current) window.clearTimeout(detectionResetRef.current);
     return true;
-  };
+  }, []);
 
-  const scheduleDetectionReset = () => {
+  const scheduleDetectionReset = useCallback(() => {
     if (detectionResetRef.current) window.clearTimeout(detectionResetRef.current);
     detectionResetRef.current = window.setTimeout(() => {
-      lastDetectedRef.current = { value: "", at: 0 };
+      lastDetectedRef.current = { value: "", at: 0, armed: true };
     }, 800);
-  };
+  }, []);
 
-  const lookupBarcode = async (value) => {
+  const lookupBarcode = useCallback(async (value) => {
     const trimmedValue = value.trim();
     if (!trimmedValue || scanningRef.current) return;
+    const now = Date.now();
+    const lastPublished = lastPublishedRef.current;
+    if (lastPublished.value === trimmedValue && now - lastPublished.at < SAME_BARCODE_COOLDOWN_MS) return;
 
     scanningRef.current = true;
     setError("");
     try {
-      await api.getProductByBarcode(trimmedValue);
       await api.publishBarcodeScan(trimmedValue, phoneToken);
+      lastPublishedRef.current = { value: trimmedValue, at: Date.now() };
       showCameraStatus("success");
     } catch (requestError) {
       setError(requestError.message || `No product found for ${trimmedValue}`);
@@ -64,7 +70,7 @@ export default function BarcodeScannerPage({ t, sessionToken }) {
     } finally {
       scanningRef.current = false;
     }
-  };
+  }, [phoneToken, showCameraStatus]);
 
   const connectScanner = async (event) => {
     event.preventDefault();
@@ -145,16 +151,32 @@ export default function BarcodeScannerPage({ t, sessionToken }) {
     startCamera();
     return () => {
       cancelled = true;
-      if (animationRef.current) cancelAnimationFrame(animationRef.current);
-      if (detectionResetRef.current) window.clearTimeout(detectionResetRef.current);
-      if (cameraStatusResetRef.current) window.clearTimeout(cameraStatusResetRef.current);
-      zxingControlsRef.current?.stop();
+      const animationFrame = animationRef.current;
+      const detectionReset = detectionResetRef.current;
+      const cameraStatusReset = cameraStatusResetRef.current;
+      const controls = zxingControlsRef.current;
+      const stream = streamRef.current;
+      const video = videoRef.current;
+      if (animationFrame) cancelAnimationFrame(animationFrame);
+      if (detectionReset) window.clearTimeout(detectionReset);
+      if (cameraStatusReset) window.clearTimeout(cameraStatusReset);
+      controls?.stop();
       zxingControlsRef.current = null;
-      streamRef.current?.getTracks().forEach((track) => track.stop());
+      stream?.getTracks().forEach((track) => track.stop());
       streamRef.current = null;
-      if (videoRef.current) videoRef.current.srcObject = null;
+      if (video) video.srcObject = null;
     };
-  }, [connected]);
+  }, [connected, acceptDetectedBarcode, lookupBarcode, scheduleDetectionReset]);
+
+  useEffect(() => {
+    if (!connected || !phoneToken) return undefined;
+    const sendHeartbeat = () => {
+      api.heartbeatBarcodePairing(phoneToken).catch(() => {});
+    };
+    sendHeartbeat();
+    const heartbeatTimer = window.setInterval(sendHeartbeat, 3000);
+    return () => window.clearInterval(heartbeatTimer);
+  }, [connected, phoneToken]);
 
   return (
     <div className="space-y-5">

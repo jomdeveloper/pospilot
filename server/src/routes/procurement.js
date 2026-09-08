@@ -93,7 +93,7 @@ router.post('/receiving/:id/receive', requireCategoryManager, (req, res) => {
   const purchaseId = Number(req.params.id);
   const purchase = getPurchase(purchaseId);
   if (!purchase) return res.status(404).json({ error: 'Purchase order not found' });
-  if (purchase.status !== 'Pending') return res.status(409).json({ error: 'Purchase order is already received' });
+  if (!['Pending', 'Partially Received'].includes(purchase.status)) return res.status(409).json({ error: 'Purchase order is already received' });
 
   const receivedAt = String(req.body?.receivedAt || '').trim();
   if (!receivedAt || Number.isNaN(new Date(receivedAt).getTime())) return res.status(400).json({ error: 'A valid received date is required' });

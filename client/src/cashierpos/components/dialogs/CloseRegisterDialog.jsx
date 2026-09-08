@@ -11,7 +11,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { usePos } from "../../context/PosContext";
 import { api } from "../../../api";
 import { formatPeso, roundMoney } from "../../utils/calculations";
-import { emptyDenominationCounts, denominationBreakdown, denominationSubtotals } from "../../data/denominations";
+import { emptyDenominationCounts, denominationSubtotals } from "../../data/denominations";
 import DenominationCounter from "./DenominationCounter.jsx";
 import Dialog from "./Dialog.jsx";
 

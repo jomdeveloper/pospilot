@@ -12,11 +12,12 @@
 import React from "react";
 import DateTimeClock from "./DateTimeClock.jsx";
 import Icon from "./Icon.jsx";
+import RemoteScanner from "./RemoteScanner.jsx";
 import { usePos } from "../context/PosContext";
 import { CASHIER, COUNTER, PHARMACY, getStoreLogo } from "../data/storeConfig";
 
 export default function PosHeader() {
-  const { state, runtime } = usePos();
+  const { state, runtime, dispatchAction } = usePos();
   const cashierName = (runtime && runtime.cashierName) || CASHIER;
   const onLogout = runtime && runtime.onLogout;
   const storeName = PHARMACY.name || "My Store";
@@ -44,6 +45,7 @@ export default function PosHeader() {
       <div className="pos-header__right">
         <div className="pos-header__meta">
           <DateTimeClock />
+          <RemoteScanner />
           <div className="pos-header__who">
             Counter {COUNTER} · {cashierName} · {sessionLabel}
           </div>
@@ -59,6 +61,16 @@ export default function PosHeader() {
             title="Sign out of PosPilot"
           >
             Sign out
+          </button>
+        )}
+        {session && session.status === "Open" && (
+          <button
+            type="button"
+            className="pos-header__logout"
+            onClick={() => dispatchAction("registerActions")}
+            title="Open register actions"
+          >
+            Register
           </button>
         )}
         {state.standby && (

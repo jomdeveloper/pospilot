@@ -9,7 +9,7 @@ import { getProducts } from "../api/products";
 import { api } from "../../api";
 import { money } from "../theme";
 import { readStoreSettings } from "../settings";
-import { splitVat, roundMoney } from "../../cashierpos/utils/calculations";
+import { calculateTaxLine, roundMoney } from "../../cashierpos/utils/calculations";
 
 export default function POSPage({ t, sessionToken }) {
   const STORAGE_KEY = "stockpilot-held-sales-v1";
@@ -33,6 +33,10 @@ export default function POSPage({ t, sessionToken }) {
   const [approvalDraft, setApprovalDraft] = useState({ type: "discount_override", reason: "", title: "" });
   const [approvalBusy, setApprovalBusy] = useState(false);
   const [session, setSession] = useState(null); // open cashier session (register gate)
+  const [sessionLoading, setSessionLoading] = useState(true);
+  const [openingFloat, setOpeningFloat] = useState("1000");
+  const [actualCash, setActualCash] = useState("");
+  const [registerBusy, setRegisterBusy] = useState(false);
   const [heldSales, setHeldSales] = useState(() => {
     try {
       const stored = window.localStorage.getItem(STORAGE_KEY);
@@ -51,9 +55,53 @@ export default function POSPage({ t, sessionToken }) {
     if (sessionToken) {
       api.getCurrentCashierSession(readStoreSettings().terminalName || "POS-02", sessionToken)
         .then((res) => { if (res && res.session) setSession(res.session); })
-        .catch(() => {});
+        .catch(() => {})
+        .finally(() => setSessionLoading(false));
+    } else {
+      setSessionLoading(false);
     }
   }, []);
+
+  const terminal = readStoreSettings().terminalName || "POS-02";
+
+  const openRegister = async () => {
+    const amount = Number(openingFloat);
+    if (!Number.isFinite(amount) || amount < 0) {
+      setError("Opening cash must be a non-negative amount.");
+      return;
+    }
+    setRegisterBusy(true);
+    setError("");
+    try {
+      const result = await api.openCashierSession({ openingFloat: amount, terminal }, sessionToken);
+      setSession(result.session);
+      setNotice("Register opened.");
+    } catch (requestError) {
+      setError(requestError.message || "Unable to open the register.");
+    } finally {
+      setRegisterBusy(false);
+    }
+  };
+
+  const closeRegister = async () => {
+    const amount = Number(actualCash);
+    if (!Number.isFinite(amount) || amount < 0) {
+      setError("Enter the actual cash counted before closing.");
+      return;
+    }
+    setRegisterBusy(true);
+    setError("");
+    try {
+      const result = await api.closeCashierSession(session.id, { actualCash: amount }, sessionToken);
+      setSession(null);
+      setActualCash("");
+      setNotice(`Register closed. Variance: ${money(result.difference || 0)}.`);
+    } catch (requestError) {
+      setError(requestError.message || "Unable to close the register.");
+    } finally {
+      setRegisterBusy(false);
+    }
+  };
 
   useEffect(() => {
     try {
@@ -85,6 +133,10 @@ export default function POSPage({ t, sessionToken }) {
   const memberId = customerType === "member" ? String(selectedCustomer.member_id || "").trim() || null : null;
 
   const addToCart = (p) => {
+    if (!session) {
+      setError("Open the register before starting a sale.");
+      return;
+    }
     setCart((prev) => {
       const found = prev.find((i) => i.id === p.id);
       if (found) {
@@ -96,27 +148,54 @@ export default function POSPage({ t, sessionToken }) {
   const setQty = (id, qty) => setCart((prev) => prev.map((i) => (i.id === id ? { ...i, qty: Math.max(1, qty) } : i)));
   const removeItem = (id) => setCart((prev) => prev.filter((i) => i.id !== id));
 
-  // Reuse the exact server math: per-line VAT split on the discounted amount,
-  // and the senior/PWD 20% on the VAT-EXCLUSIVE amount, only for eligible lines.
+  // Reuse the exact server math: one discount pass per line, then tax buckets.
   const subtotal = roundMoney(cart.reduce((s, i) => s + i.price * i.qty, 0));
   const itemDiscountTotal = roundMoney(cart.reduce((s, i) => s + i.price * i.qty * (discountPct / 100), 0));
   let vatTotal = 0;
   let seniorDiscountTotal = 0;
+  let vatableSales = 0;
+  let vatExemptSales = 0;
+  let zeroRatedSales = 0;
+  let nonVatSales = 0;
   cart.forEach((item) => {
-    const discountedInclusive = roundMoney(item.price * item.qty - item.price * item.qty * (discountPct / 100));
-    const { vat, vatable } = splitVat(discountedInclusive);
-    vatTotal += vat;
-    if (customerType === "senior" || customerType === "pwd") {
-      const eligible = customerType === "senior" ? Boolean(item.senior_discount_eligible) : Boolean(item.pwd_discount_eligible);
-      if (eligible) seniorDiscountTotal = roundMoney(seniorDiscountTotal + roundMoney(vatable * 0.2));
-    }
+    const gross = roundMoney(item.price * item.qty);
+    const eligible = (customerType === "senior" || customerType === "pwd") && (customerType === "senior" ? Boolean(item.senior_discount_eligible) : Boolean(item.pwd_discount_eligible));
+    const taxLine = calculateTaxLine(
+      gross,
+      item.taxType || item.tax_type,
+      customerType,
+      customerType === "member" ? discountPct : 0,
+      customerType !== "member" ? discountPct : 0,
+      eligible
+    );
+    vatTotal += taxLine.vat;
+    seniorDiscountTotal += taxLine.customerDiscount;
+    vatableSales += taxLine.vatableSales;
+    vatExemptSales += taxLine.vatExemptSales;
+    zeroRatedSales += taxLine.zeroRatedSales;
+    nonVatSales += taxLine.nonVatSales;
   });
   const vat = roundMoney(vatTotal);
   const seniorDiscountTotalR = roundMoney(seniorDiscountTotal);
-  const total = roundMoney(Math.max(subtotal - itemDiscountTotal - seniorDiscountTotalR, 0));
+  const total = roundMoney(cart.reduce((sum, item) => {
+    const gross = roundMoney(item.price * item.qty);
+    const eligible = (customerType === "senior" || customerType === "pwd") && (customerType === "senior" ? Boolean(item.senior_discount_eligible) : Boolean(item.pwd_discount_eligible));
+    return sum + calculateTaxLine(
+      gross,
+      item.taxType || item.tax_type,
+      customerType,
+      customerType === "member" ? discountPct : 0,
+      customerType !== "member" ? discountPct : 0,
+      eligible
+    ).lineTotal;
+  }, 0));
 
   const completeSale = async () => {
     try {
+      if (!session) {
+        setError("Open the register before completing a sale.");
+        return;
+      }
       const received = method === "cash" ? Number(cashReceived) : total;
       if (method === "cash" && (!Number.isFinite(received) || received < total)) {
         setError("Cash received must cover the sale total.");
@@ -139,6 +218,11 @@ export default function POSPage({ t, sessionToken }) {
       setLastSale(sale);
       setInvoiceId(sale.id);
       setTransactionRef(sale.transactionId || `#${sale.id}`);
+      setCart([]);
+      setDiscountPct(0);
+      setCustomerId("");
+      setCashReceived("");
+      setMethod("cash");
       setPayOpen(false);
       setReceiptOpen(true);
       setHeldSales((prev) => prev.filter((held) => held.id !== ""));
@@ -224,8 +308,45 @@ export default function POSPage({ t, sessionToken }) {
     }
   };
 
+  if (sessionLoading || !session) {
+    return (
+      <div className="p-6">
+        <Card t={t} className="p-6 max-w-xl">
+          <p className="text-xs uppercase tracking-[0.16em] font-bold" style={{ color: t.warning }}>Register required</p>
+          <h2 className="text-xl font-extrabold mt-1" style={{ color: t.text }}>Open a register to use POS</h2>
+          <p className="text-sm mt-2" style={{ color: t.sub }}>
+            This terminal has no open register session. Sales are disabled until an authorized cashier opens the register with an opening cash float.
+          </p>
+          <div className="flex flex-wrap gap-3 mt-4 items-end">
+            <label className="text-sm" style={{ color: t.text }}>
+              Opening cash
+              <input value={openingFloat} onChange={(event) => setOpeningFloat(event.target.value)} type="number" min="0" step="0.01" className="block mt-1 px-3 py-2 rounded-lg" style={{ background: t.bg, color: t.text, border: `1px solid ${t.border}` }} />
+            </label>
+            <Button t={t} onClick={openRegister} disabled={registerBusy}>
+              {registerBusy ? "Opening..." : "Open Register"}
+            </Button>
+          </div>
+        </Card>
+      </div>
+    );
+  }
+
   return (
     <div className="pos-workspace grid grid-cols-1 xl:grid-cols-[minmax(0,1.35fr)_minmax(360px,0.65fr)] gap-4 items-start">
+      <div className="xl:col-span-2 flex flex-wrap items-end justify-between gap-3 rounded-xl px-4 py-3" style={{ background: t.successSoft, border: `1px solid ${t.border}` }}>
+        <div className="text-xs" style={{ color: t.sub }}>
+          Register <strong style={{ color: t.text }}>{session.terminal}</strong> · Cashier <strong style={{ color: t.text }}>{session.cashierUsername}</strong> · Opening cash <strong style={{ color: t.text }}>{money(session.openingFloat)}</strong>
+        </div>
+        <div className="flex items-end gap-2">
+          <label className="text-xs" style={{ color: t.sub }}>
+            Actual cash to close
+            <input value={actualCash} onChange={(event) => setActualCash(event.target.value)} type="number" min="0" step="0.01" className="block mt-1 px-2 py-1.5 rounded-lg w-36" style={{ background: t.card, color: t.text, border: `1px solid ${t.border}` }} />
+          </label>
+          <Button t={t} onClick={closeRegister} disabled={registerBusy}>
+            {registerBusy ? "Closing..." : "Close Register"}
+          </Button>
+        </div>
+      </div>
       <section className="pos-catalog space-y-4 min-w-0">
         {notice && <div className="rounded-xl px-4 py-3 text-sm" style={{ background: t.successSoft, color: t.success }}>{notice}</div>}
         {error && <div className="rounded-xl px-4 py-3 text-sm" style={{ background: t.dangerSoft, color: t.danger }}>{error}</div>}
@@ -474,6 +595,10 @@ export default function POSPage({ t, sessionToken }) {
           subtotal={lastSale && lastSale.subtotal !== undefined ? lastSale.subtotal : subtotal}
           tax={lastSale && lastSale.vat !== undefined ? lastSale.vat : vat}
           total={lastSale && lastSale.grandTotal !== undefined ? lastSale.grandTotal : total}
+          vatableSales={lastSale?.vatableSales ?? vatableSales}
+          vatExemptSales={lastSale?.vatExemptSales ?? vatExemptSales}
+          zeroRatedSales={lastSale?.zeroRatedSales ?? zeroRatedSales}
+          nonVatSales={lastSale?.nonVatSales ?? nonVatSales}
           method={method}
           invoiceId={transactionRef || invoiceId}
           onNewSale={newSale}

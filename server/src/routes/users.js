@@ -1,6 +1,6 @@
 const express = require('express');
 const db = require('../db');
-const { authenticate, requireAdministrator } = require('./auth');
+const { requireAdministrator } = require('./auth');
 const { auditLog } = require('../audit');
 const { hashPassword, passwordPolicyError } = require('../security');
 
@@ -15,7 +15,7 @@ function normalizeUser(row) {
   };
 }
 
-router.get('/', authenticate, (req, res) => {
+router.get('/', requireAdministrator, (req, res) => {
   const query = String(req.query.q || '').trim();
   const rows = query
     ? db.prepare(`
