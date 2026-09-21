@@ -1,6 +1,6 @@
 const path = require('path');
 const fs = require('fs');
-const { execFile } = require('child_process');
+const { execFile, execFileSync } = require('child_process');
 const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 
 // Raw ESC/POS receipt printer (optional). If the config env vars are not set,
@@ -61,13 +61,135 @@ function stopServerCleanly() {
   }
 }
 
+function getLanAddress() {
+  const nets = require('os').networkInterfaces ? require('os').networkInterfaces() : {};
+  for (const entries of Object.values(nets)) {
+    for (const item of entries || []) {
+      if (item.family === 'IPv4' && !item.internal && !item.address.startsWith('169.254.')) {
+        return item.address;
+      }
+    }
+  }
+  return '127.0.0.1';
+}
+
+function ensureLanHttpsCertificate() {
+  if (!app.isPackaged) return null;
+  const certDirectory = path.join(app.getPath('userData'), 'certs');
+  const keyPath = path.join(certDirectory, 'pospilot-lan-key.pem');
+  const certPath = path.join(certDirectory, 'pospilot-lan-cert.pem');
+  const lanIp = getLanAddress();
+
+  logger.info('electron', 'Preparing LAN HTTPS certificate', {
+    lanIp,
+    certDirectory,
+    keyPath,
+    certPath,
+    hasKey: fs.existsSync(keyPath),
+    hasCert: fs.existsSync(certPath),
+  });
+
+  try {
+    fs.mkdirSync(certDirectory, { recursive: true });
+
+    if (!fs.existsSync(keyPath) || !fs.existsSync(certPath)) {
+      try {
+        logger.info('electron', 'Generating LAN HTTPS certificate with mkcert', { lanIp, certDirectory });
+        execFileSync('mkcert', ['-install'], { stdio: 'ignore' });
+        execFileSync('mkcert', ['-key-file', keyPath, '-cert-file', certPath, lanIp, 'localhost', '127.0.0.1'], {
+          stdio: 'ignore',
+        });
+      } catch (_mkcertError) {
+        logger.warn('electron', 'mkcert failed while generating LAN HTTPS certificate', {
+          lanIp,
+          certDirectory,
+          mkcertError: (_mkcertError && (_mkcertError.message || String(_mkcertError))) || 'unknown',
+        });
+        try {
+          logger.info('electron', 'Falling back to OpenSSL LAN HTTPS certificate generation', { lanIp, certDirectory });
+          execFileSync('openssl', [
+            'req', '-x509', '-newkey', 'rsa:2048',
+            '-keyout', keyPath,
+            '-out', certPath,
+            '-days', '365',
+            '-nodes',
+            '-subj', '/CN=PosPilot LAN',
+            '-addext', `subjectAltName=IP:${lanIp},IP:127.0.0.1,DNS:localhost`,
+          ], { stdio: 'ignore' });
+        } catch (_opensslError) {
+          logger.warn('electron', 'LAN HTTPS certificate generation unavailable', {
+            lanIp,
+            certDirectory,
+            opensslError: (_opensslError && (_opensslError.message || String(_opensslError))) || 'unknown',
+            mkcertAvailable: Boolean(process.env.PATH && process.env.PATH.includes('mkcert')),
+          });
+          return null;
+        }
+      }
+    }
+
+    process.env.HTTPS_KEY_PATH = keyPath;
+    process.env.HTTPS_CERT_PATH = certPath;
+    process.env.POSPILOT_LAN_IP = lanIp;
+    logger.info('electron', 'LAN HTTPS certificate ready', {
+      lanIp,
+      keyPath,
+      certPath,
+      httpUrl: `http://${lanIp}:4000/scanner`,
+      httpsUrl: `https://${lanIp}:4000/scanner`,
+    });
+    return { keyPath, certPath, lanIp };
+  } catch (_error) {
+    logger.warn('electron', 'Unable to prepare LAN HTTPS certificate', { lanIp, certDirectory, error: (_error && (_error.message || String(_error))) || 'unknown' });
+    return null;
+  }
+}
+
 function startBackend() {
-  // Packaged apps ship their code inside a read-only asar, so live data
-  // (database + automatic backups) must live in the per-user app-data folder
-  // instead of next to the executable. Dev builds keep using server/data so
-  // browser mode and desktop mode share the same database.
-  if (app.isPackaged && !process.env.POSPILOT_DB_PATH) {
-    process.env.POSPILOT_DB_PATH = path.join(app.getPath('userData'), 'data', 'pospilot.db');
+  // Packaged apps ship their code inside a read-only asar, so live data must
+  // live in the user-data folder instead of next to the executable. A stale
+  // developer environment variable can otherwise point the app at the wrong DB
+  // and keep reusing a previous database across installs.
+  if (app.isPackaged) {
+    const packagedDbPath = path.join(app.getPath('userData'), 'data', 'pospilot.db');
+    if (process.env.POSPILOT_DB_PATH && process.env.POSPILOT_DB_PATH !== packagedDbPath) {
+      logger.warn('electron', 'Ignoring POSPILOT_DB_PATH in packaged build', {
+        override: process.env.POSPILOT_DB_PATH,
+        packagedDbPath,
+      });
+    }
+    process.env.POSPILOT_DB_PATH = packagedDbPath;
+
+    // Keep the environment variable as a backwards-compatible launcher
+    // override, while making the Settings value the normal packaged-app path.
+    const db = require('../server/src/db');
+    const settingEnabled = String(db.getAppSetting('lanAccessEnabled') || '').toLowerCase() === 'true';
+    const lanEnabled = String(process.env.POSPILOT_LAN_MODE || '').toLowerCase() === '1' || settingEnabled;
+    process.env.POSPILOT_LAN_MODE = lanEnabled ? '1' : '0';
+    process.env.HOST = lanEnabled ? '0.0.0.0' : '127.0.0.1';
+    if (lanEnabled) {
+      process.env.HOST = '0.0.0.0';
+      logger.info('electron', 'LAN mode enabled for packaged app', {
+        lanEnabled,
+        host: process.env.HOST,
+        lanIp: getLanAddress(),
+      });
+      const certInfo = ensureLanHttpsCertificate();
+      if (certInfo) {
+        process.env.POSPILOT_LAN_IP = certInfo.lanIp;
+        logger.info('electron', 'LAN HTTPS certificate prepared for phone access', {
+          lanIp: certInfo.lanIp,
+          keyPath: certInfo.keyPath,
+          certPath: certInfo.certPath,
+        });
+      } else {
+        process.env.POSPILOT_LAN_IP = getLanAddress();
+        logger.warn('electron', 'LAN HTTPS certificate unavailable; falling back to plain LAN mode', {
+          lanIp: process.env.POSPILOT_LAN_IP,
+          httpUrl: `http://${process.env.POSPILOT_LAN_IP}:4000/scanner`,
+        });
+      }
+    }
   }
   const { start } = require('../server/src/index');
   return start(4000);
@@ -76,7 +198,10 @@ function startBackend() {
 const isDev = !app.isPackaged;
 const SERVER_PORT = 4000;
 const DEV_CLIENT_URL = process.env.POSPILOT_DEV_CLIENT_URL || 'http://127.0.0.1:5173';
-const PROD_CLIENT_URL = `http://127.0.0.1:${SERVER_PORT}`;
+function getProdClientUrl() {
+  const protocol = process.env.HTTPS_KEY_PATH && process.env.HTTPS_CERT_PATH ? 'https' : 'http';
+  return `${protocol}://127.0.0.1:${SERVER_PORT}`;
+}
 
 let mainWindow;
 
@@ -84,24 +209,34 @@ let mainWindow;
 // written to the same rotating logs the server uses so support staff can see
 // what happened even when the window disappears.
 const logger = require('../server/src/logger');
+
+function logStartupFailure(stage, error, extra = {}) {
+  const detail = error && (error.stack || error.message || String(error));
+  logger.error('electron', `Startup failure during ${stage}`, {
+    packaged: app.isPackaged,
+    serverPort: SERVER_PORT,
+    ...extra,
+    detail,
+  });
+  console.error(`[startup] ${stage}:`, detail || error);
+}
+
 process.on('uncaughtException', (error) => {
-  logger.error('electron', 'Uncaught exception', { error: (error && error.stack) || String(error) });
+  logStartupFailure('uncaught exception', error);
   app.quit();
 });
 process.on('unhandledRejection', (reason) => {
-  logger.error('electron', 'Unhandled rejection', { reason: String(reason) });
+  logStartupFailure('unhandled rejection', reason);
 });
 
-if (DEV_CLIENT_URL.startsWith('https://')) {
-  app.on('certificate-error', (event, webContents, url, error, certificate, callback) => {
-    if (url.startsWith('https://127.0.0.1:') || url.startsWith('https://localhost:')) {
-      event.preventDefault();
-      callback(true);
-      return;
-    }
-    callback(false);
-  });
-}
+app.on('certificate-error', (event, webContents, url, error, certificate, callback) => {
+  if (url.startsWith('https://127.0.0.1:') || url.startsWith('https://localhost:')) {
+    event.preventDefault();
+    callback(true);
+    return;
+  }
+  callback(false);
+});
 
 async function createWindow() {
   mainWindow = new BrowserWindow({
@@ -135,7 +270,7 @@ async function createWindow() {
     await mainWindow.loadURL(DEV_CLIENT_URL);
     mainWindow.webContents.openDevTools({ mode: 'detach' });
   } else {
-    await mainWindow.loadURL(PROD_CLIENT_URL);
+    await mainWindow.loadURL(getProdClientUrl());
   }
 
   mainWindow.once('ready-to-show', () => {
@@ -524,115 +659,136 @@ async function runReceiptTest() {
 }
 
 app.whenReady().then(async () => {
-  serverInstance = await startBackend(SERVER_PORT);
-  // Load previously-saved ESC/POS printer settings into the module.
-  loadPrinterConfig();
+  try {
+    serverInstance = await startBackend(SERVER_PORT);
+    // Load previously-saved ESC/POS printer settings into the module.
+    loadPrinterConfig();
 
-  // Automatic database snapshots: right after boot, then every 6 hours.
-  const { scheduleBackups } = require('../server/src/index');
-  scheduleBackups();
+    // Automatic database snapshots: right after boot, then every 6 hours.
+    const { scheduleBackups } = require('../server/src/index');
+    scheduleBackups();
 
-  // Frameless + fullscreen window has no title-bar close button, so expose a
-  // clean quit path for the renderer (login X button / Ctrl+Q / Cmd+Q).
-  ipcMain.on('app-quit', () => {
-    stopServerCleanly();
-    app.quit();
-  });
+    // Frameless + fullscreen window has no title-bar close button, so expose a
+    // clean quit path for the renderer (login X button / Ctrl+Q / Cmd+Q).
+    ipcMain.on('app-quit', () => {
+      stopServerCleanly();
+      app.quit();
+    });
 
-  // List installed printers (for the Printer Settings dialog).
-  ipcMain.handle('list-printers', async (event) => {
-    const win = BrowserWindow.fromWebContents(event.sender);
-    if (!win) return [];
-    try {
-      const printers = await win.webContents.getPrintersAsync();
-      return (printers || []).map((p) => ({ name: p.name, isDefault: !!p.isDefault }));
-    } catch (e) {
-      return [];
-    }
-  });
+    ipcMain.on('app-relaunch', () => {
+      app.relaunch();
+      stopServerCleanly();
+      app.exit(0);
+    });
 
-  // List serial / Bluetooth COM ports detected by Windows.
-  ipcMain.handle('list-serial-ports', async () => listSerialPortsInfo());
+    // List installed printers (for the Printer Settings dialog).
+    ipcMain.handle('list-printers', async (event) => {
+      const win = BrowserWindow.fromWebContents(event.sender);
+      if (!win) return [];
+      try {
+        const printers = await win.webContents.getPrintersAsync();
+        return (printers || []).map((p) => ({ name: p.name, isDefault: !!p.isDefault }));
+      } catch (e) {
+        return [];
+      }
+    });
 
-  // Let the Settings page pick an off-machine backup folder (network share,
-  // USB drive, second disk) through the OS directory picker.
-  ipcMain.handle('select-backup-directory', async (event) => {
-    const win = BrowserWindow.fromWebContents(event.sender) || mainWindow;
-    if (!win) return null;
-    try {
-      const result = await dialog.showOpenDialog(win, {
-        title: 'Choose a backup folder',
-        buttonLabel: 'Use this folder',
-        properties: ['openDirectory', 'createDirectory'],
-      });
-      if (result.canceled || !result.filePaths || !result.filePaths[0]) return null;
-      return result.filePaths[0];
-    } catch (_error) {
-      return null;
-    }
-  });
+    // List serial / Bluetooth COM ports detected by Windows.
+    ipcMain.handle('list-serial-ports', async () => listSerialPortsInfo());
 
-  // Launch at Windows sign-in (kiosk / register convenience).
-  ipcMain.handle('launch-on-startup-get', () => {
-    if (app.isPackaged) return app.getLoginItemSettings().openAtLogin;
-    return false;
-  });
+    // Let the Settings page pick an off-machine backup folder (network share,
+    // USB drive, second disk) through the OS directory picker.
+    ipcMain.handle('select-backup-directory', async (event) => {
+      const win = BrowserWindow.fromWebContents(event.sender) || mainWindow;
+      if (!win) return null;
+      try {
+        const result = await dialog.showOpenDialog(win, {
+          title: 'Choose a backup folder',
+          buttonLabel: 'Use this folder',
+          properties: ['openDirectory', 'createDirectory'],
+        });
+        if (result.canceled || !result.filePaths || !result.filePaths[0]) return null;
+        return result.filePaths[0];
+      } catch (_error) {
+        return null;
+      }
+    });
 
-  ipcMain.handle('launch-on-startup-set', (_event, enabled) => {
-    if (!app.isPackaged) return false;
-    app.setLoginItemSettings({ openAtLogin: Boolean(enabled), openAsHidden: false, path: process.execPath });
-    return app.getLoginItemSettings().openAtLogin;
-  });
+    // Launch at Windows sign-in (kiosk / register convenience).
+    ipcMain.handle('launch-on-startup-get', () => {
+      if (app.isPackaged) return app.getLoginItemSettings().openAtLogin;
+      return false;
+    });
 
-  // Priority receipt printing: ESC/POS (if configured/reachable) else raster
-  // via webContents.print(). payload = { lines, heightMicrons }.
-  ipcMain.handle('print-receipt', async (event, payload) => {
-    const win = BrowserWindow.fromWebContents(event.sender);
-    if (!win) return { ok: false, error: 'no-window' };
-    return printReceiptFlow(win, payload);
-  });
+    ipcMain.handle('launch-on-startup-set', (_event, enabled) => {
+      if (!app.isPackaged) return false;
+      app.setLoginItemSettings({ openAtLogin: Boolean(enabled), openAsHidden: false, path: process.execPath });
+      return app.getLoginItemSettings().openAtLogin;
+    });
 
-  // Diagnostic: send a test receipt through whatever ESC/POS mode is active.
-  ipcMain.handle('print-test-espos', async (event) => {
-    const win = BrowserWindow.fromWebContents(event.sender);
-    if (!win) return { ok: false, error: 'no-window' };
-    return runReceiptTest();
-  });
+    // Priority receipt printing: ESC/POS (if configured/reachable) else raster
+    // via webContents.print(). payload = { lines, heightMicrons }.
+    ipcMain.handle('print-receipt', async (event, payload) => {
+      const win = BrowserWindow.fromWebContents(event.sender);
+      if (!win) return { ok: false, error: 'no-window' };
+      return printReceiptFlow(win, payload);
+    });
 
-  // Describe current receipt-print configuration (for debugging / UI).
-  ipcMain.handle('receipt-print-info', async (event) => {
-    const win = BrowserWindow.fromWebContents(event.sender);
-    const raster = win && win.webContents ? await findReceiptPrinter(win) : null;
-    return {
+    // Diagnostic: send a test receipt through whatever ESC/POS mode is active.
+    ipcMain.handle('print-test-espos', async (event) => {
+      const win = BrowserWindow.fromWebContents(event.sender);
+      if (!win) return { ok: false, error: 'no-window' };
+      return runReceiptTest();
+    });
+
+    // Describe current receipt-print configuration (for debugging / UI).
+    ipcMain.handle('receipt-print-info', async (event) => {
+      const win = BrowserWindow.fromWebContents(event.sender);
+      const raster = win && win.webContents ? await findReceiptPrinter(win) : null;
+      return {
+        exposConfigured: expos.isConfigured(),
+        exposPrinter: expos.describePrinter(),
+        rasterDetected: raster
+      };
+    });
+
+    // Return saved + effective ESC/POS settings for the Printer Settings UI.
+    ipcMain.handle('printer-config-get', () => ({
+      saved: expos.getFileConfig(),
+      effective: expos.getConfig(),
       exposConfigured: expos.isConfigured(),
-      exposPrinter: expos.describePrinter(),
-      rasterDetected: raster
-    };
-  });
+      exposPrinter: expos.describePrinter()
+    }));
 
-  // Return saved + effective ESC/POS settings for the Printer Settings UI.
-  ipcMain.handle('printer-config-get', () => ({
-    saved: expos.getFileConfig(),
-    effective: expos.getConfig(),
-    exposConfigured: expos.isConfigured(),
-    exposPrinter: expos.describePrinter()
-  }));
+    // Save ESC/POS settings from the UI to the persisted config file.
+    ipcMain.handle('printer-config-save', async (event, obj) => {
+      try {
+        const saved = savePrinterConfig(obj);
+        return { ok: true, saved, exposConfigured: expos.isConfigured() };
+      } catch (e) {
+        return { ok: false, error: String((e && e.message) || e) };
+      }
+    });
 
-  // Save ESC/POS settings from the UI to the persisted config file.
-  ipcMain.handle('printer-config-save', async (event, obj) => {
+    await createWindow();
+
+    app.on('activate', () => {
+      if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    });
+  } catch (error) {
+    logStartupFailure('app initialization', error, {
+      appIsPackaged: app.isPackaged,
+      serverPort: SERVER_PORT,
+      prodUrl: getProdClientUrl(),
+      devUrl: DEV_CLIENT_URL
+    });
     try {
-      const saved = savePrinterConfig(obj);
-      return { ok: true, saved, exposConfigured: expos.isConfigured() };
-    } catch (e) {
-      return { ok: false, error: String((e && e.message) || e) };
+      dialog.showErrorBox('PosPilot failed to start', 'Check the app logs for the startup error.');
+    } catch (_ignored) {
+      // Some environments may not support showing a dialog before the window is ready.
     }
-  });
-
-  await createWindow();
-
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
-  });
+    app.quit();
+  }
 });
 
 app.on('window-all-closed', () => {

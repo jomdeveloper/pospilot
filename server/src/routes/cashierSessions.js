@@ -190,6 +190,17 @@ router.get('/current', authenticate, (req, res) => {
   return res.json({ session: serializeSession(session) });
 });
 
+router.get('/terminals', requireCashierOrAbove, (req, res) => {
+  const rows = db.prepare(`
+    SELECT terminal, MAX(id) AS sessionId
+    FROM cashier_sessions
+    WHERE status = 'Open'
+    GROUP BY terminal
+    ORDER BY terminal ASC
+  `).all();
+  return res.json({ terminals: rows.map((row) => ({ terminal: row.terminal, sessionId: row.sessionId })) });
+});
+
 /* ------------------------------------------------------------------ */
 /*  List + daily summary (reports)                                     */
 /* ------------------------------------------------------------------ */

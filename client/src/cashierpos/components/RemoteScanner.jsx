@@ -17,7 +17,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { usePos } from "../context/PosContext";
 import { api } from "../../api";
 
-export default function RemoteScanner() {
+export default function RemoteScanner({ className = "pos-header__scanner" }) {
   const { state, actions, runtime } = usePos();
   const [connected, setConnected] = useState(false);
   const [key, setKey] = useState("");
@@ -91,30 +91,13 @@ export default function RemoteScanner() {
           return;
         }
 
-        // Use the same visible barcode-input path as a physical scanner. This
-        // keeps the phone scan visible to the cashier and lets BarcodeSearch
-        // perform the normal exact lookup, add-to-cart, and not-found flow.
-        const input = document.getElementById("product-search-input");
-        if (input && !input.disabled && !stateRef.current.dialog) {
-          // Acknowledge before touching the controlled input. Any interruption
-          // after this point discards the scan instead of replaying it.
+        // Deliver directly to the barcode lookup so phone scans do not depend
+        // on the hidden input retaining focus after another control is used.
+        if (!stateRef.current.dialog) {
+          // Acknowledge before dispatching. Any interruption after this point
+          // discards the scan instead of replaying it.
           lastScanId = scan.id;
-          input.focus();
-          actionsRef.current.setSearchQuery(scan.barcode);
-          window.setTimeout(() => {
-            if (stateRef.current.dialog) {
-              actionsRef.current.setSearchQuery("");
-              return;
-            }
-            const currentInput = document.getElementById("product-search-input");
-            if (currentInput && !currentInput.disabled) {
-              currentInput.dispatchEvent(new KeyboardEvent("keydown", {
-                key: "Enter",
-                bubbles: true,
-                cancelable: true,
-              }));
-            }
-          }, 0);
+          window.dispatchEvent(new CustomEvent("pospilot:barcode-scan", { detail: scan.barcode }));
           return;
         }
 
@@ -144,7 +127,7 @@ export default function RemoteScanner() {
 
   return (
     <span
-      className="pos-header__scanner"
+      className={className}
       title={
         connected
           ? "Phone scanner connected — scan a barcode to add it to the sale"

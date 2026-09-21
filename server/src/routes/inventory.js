@@ -92,7 +92,13 @@ router.post('/adjustments', requireRole(...INVENTORY_ROLES), (req, res) => {
       if (delta < 0 && currentQuantity < quantity) throw new Error(`Insufficient stock at ${location.name} (available: ${currentQuantity}, requested: ${quantity})`);
       const stockUpdate = db.prepare('UPDATE inventory_location_stock SET quantity = quantity + ? WHERE location_id = ? AND product_id = ? AND quantity + ? >= 0').run(delta, locationId, productId, delta);
       if (stockUpdate.changes !== 1) throw new Error('Stock could not be updated');
-      db.prepare('UPDATE products SET stock = stock + ? WHERE id = ? AND stock + ? >= 0').run(delta, productId, delta);
+      const productStockUpdate = db.prepare('UPDATE products SET stock = stock + ? WHERE id = ? AND stock + ? >= 0').run(delta, productId, delta);
+      if (productStockUpdate.changes !== 1) {
+        // Never report a partial adjustment: if the aggregate products.stock
+        // cannot absorb the change, roll the whole transaction back instead of
+        // silently leaving the product and location ledgers out of sync.
+        throw new Error(`Product ${productId} stock could not be updated`);
+      }
       const movement = db.prepare(`INSERT INTO inventory_movements (movement_type, product_id, quantity, to_location_id, reason, actor_user_id, actor_username) VALUES (?, ?, ?, ?, ?, ?, ?)`).run(direction === 'increase' ? 'Adjustment In' : 'Adjustment Out', productId, quantity, locationId, reason, req.session.userId, req.session.username);
       auditLog(req, 'Adjusted inventory', 'Inventory Movement', movement.lastInsertRowid, { productId, locationId, quantity, direction, reason });
       return db.prepare('SELECT quantity FROM inventory_location_stock WHERE location_id = ? AND product_id = ?').get(locationId, productId);

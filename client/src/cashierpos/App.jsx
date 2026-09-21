@@ -17,6 +17,7 @@ import SidePanels from "./components/SidePanels.jsx";
 import Toast from "./components/Toast.jsx";
 import DialogHost from "./components/dialogs/DialogHost.jsx";
 import RegisterGate from "./components/RegisterGate.jsx";
+import RemoteScanner from "./components/RemoteScanner.jsx";
 import { setStoreIdentity, setCashierName } from "./data/storeConfig";
 import { DEFAULT_SETTINGS, readStoreSettings, saveStoreSettings } from "../stockpilot/settings";
 import { api } from "../api";
@@ -103,6 +104,17 @@ function useKeyboardShortcuts() {
           actions.showToast("Transaction resumed", false, "success");
         } else if (!state.standby) {
           dispatchAction("pause");
+        }
+        return;
+      }
+
+      // F7 recalls a held transaction directly from the Ready view.
+      const isF7 = e.key === "F7" || e.code === "F7";
+      if (state.standby && !state.paused && isF7) {
+        e.preventDefault();
+        if (state.heldSales.length > 0) {
+          actions.pressButton("standby-F7");
+          dispatchAction("recall");
         }
         return;
       }
@@ -234,6 +246,16 @@ function useKeyboardShortcuts() {
 const SCANNER_KEY_MAX_GAP_MS = 40;
 const SCANNER_MIN_CHARS = 3;
 
+function looksLikeBarcode(value) {
+  const q = String(value || "").trim();
+  if (!q || q.length < SCANNER_MIN_CHARS || q.length > 64) return false;
+  if (/\s/.test(q)) return false;
+  if (!/^[A-Za-z0-9._/-]+$/.test(q)) return false;
+
+  const digitCount = (q.match(/\d/g) || []).length;
+  return digitCount >= 3 || q.length >= 8;
+}
+
 function useBarcodeCapture() {
   const { state, actions } = usePos();
   const ref = useRef({ state, actions });
@@ -248,20 +270,7 @@ function useBarcodeCapture() {
       const q = buffer.trim();
       buffer = "";
       if (timer) { clearTimeout(timer); timer = null; }
-      if (!q) return;
-
-      // Route the scan into the barcode field path: set the value, then
-      // trigger the same Enter-handler flow that resolves barcode/SKU.
-      const input = document.getElementById("product-search-input");
-      if (input) input.focus();
-      ref.current.actions.setSearchQuery(q);
-      // Give the controlled input a beat to adopt the value, then commit.
-      setTimeout(() => {
-        const el = document.getElementById("product-search-input");
-        if (el) {
-          el.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
-        }
-      }, 0);
+      if (!q || !looksLikeBarcode(q)) return;
     };
 
     const reset = () => {
@@ -285,10 +294,12 @@ function useBarcodeCapture() {
 
       if (e.key === "Enter") {
         // A scanner burst ends with Enter → commit it as a scan.
-        if (buffer.length >= SCANNER_MIN_CHARS) {
+        if (buffer.length >= SCANNER_MIN_CHARS && looksLikeBarcode(buffer)) {
           e.preventDefault();
           e.stopPropagation();
           commit();
+        } else if (buffer.length >= SCANNER_MIN_CHARS) {
+          reset();
         }
         // Otherwise Enter passes through (buttons, qty dialogs, etc.).
         return;
@@ -305,14 +316,15 @@ function useBarcodeCapture() {
       buffer += e.key;
       lastTs = now;
 
-      // Only once the burst is CONFIDENTLY a scan (>= SCANNER_MIN_CHARS fast
-      // chars) do we swallow the keystrokes. Single/gradual keys still pass
-      // through untouched, so "d" (void), "1" (qty), etc. keep working.
-      if (buffer.length >= SCANNER_MIN_CHARS) {
-        // Swallow chars that were already about to be typed into the focused
-        // control (e.g. a Quantity input) BEFORE they pollute it.
+      // Only once the burst matches a barcode-like pattern do we swallow the
+      // keystrokes, which keeps human typing from being mistaken for a scan.
+      if (buffer.length >= SCANNER_MIN_CHARS && looksLikeBarcode(buffer)) {
         e.preventDefault();
         e.stopPropagation();
+      } else if (buffer.length >= SCANNER_MIN_CHARS) {
+        // A fast burst that looks like regular typing should not be swallowed.
+        // Reset the buffer so it can continue as normal key input.
+        reset();
       }
 
       // Wrap the burst after a short pause so a lone fragment doesn't hang.
@@ -331,7 +343,7 @@ function useBarcodeCapture() {
 function PosApp() {
   useKeyboardShortcuts();
   useBarcodeCapture();
-  const { state, dispatchAction } = usePos();
+  const { state, dispatchAction, runtime } = usePos();
   const localOnly = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
   const networkStatus = localOnly ? "Offline · Local only" : "Lan connected";
   // The footer's transaction number follows the ACTIVE transaction. After a
@@ -348,10 +360,9 @@ function PosApp() {
           <PosHeader />
           <RegisterGate />
           <footer className="pos-footer pos-footer--gate">
-            <span className={localOnly ? "pos-footer__offline" : "pos-footer__online"}>
-              {networkStatus}
-            </span>
-            <span>Register Locked</span>
+            <span>{networkStatus}</span>
+            <RemoteScanner className="pos-footer__scanner" />
+            <span className="pos-footer__badge">Register Locked</span>
           </footer>
         </div>
         <Toast />
@@ -372,18 +383,22 @@ function PosApp() {
           </div>
 
           <footer className="pos-footer">
-            <span>
-              Terminal: {state.session.terminal || "POS-02"} ·{" "}
-              {state.session.status === "Open" ? (
-                <span className="pos-footer__open">Session {state.session.sessionRef}</span>
-              ) : (
-                "Register Closed"
-              )}
-              <span className={localOnly ? "pos-footer__offline" : "pos-footer__online"}>
-                {" · " + networkStatus}
+            <div className="pos-footer__left">
+              <span className="pos-footer__badge">
+                Terminal: {state.session.terminal || "POS-02"}
               </span>
-            </span>
-            <span>
+              <span className="pos-footer__separator" aria-hidden="true">|</span>
+              <span className="pos-footer__badge">
+                {state.session.status === "Open"
+                  ? "Session " + state.session.sessionRef
+                  : "Register Closed"}
+              </span>
+              <span className="pos-footer__separator" aria-hidden="true">|</span>
+              <span className="pos-footer__badge">{networkStatus}</span>
+              <span className="pos-footer__separator" aria-hidden="true">|</span>
+              <RemoteScanner className="pos-footer__scanner" />
+            </div>
+            <span className="pos-footer__badge">
               {state.standby
                 ? "Transaction: Ready"
                 : state.paused

@@ -11,8 +11,6 @@
  */
 import React from "react";
 import DateTimeClock from "./DateTimeClock.jsx";
-import Icon from "./Icon.jsx";
-import RemoteScanner from "./RemoteScanner.jsx";
 import { usePos } from "../context/PosContext";
 import { CASHIER, COUNTER, PHARMACY, getStoreLogo } from "../data/storeConfig";
 
@@ -23,9 +21,15 @@ export default function PosHeader() {
   const storeName = PHARMACY.name || "My Store";
   const storeLogo = getStoreLogo();
   const session = state.session;
+  const terminal = (session && session.terminal) || (runtime && runtime.terminal) || `POS-${COUNTER}`;
+  const counterMatch = String(terminal).match(/(?:POS|COUNTER)[\s_-]*(\d+)$/i);
+  const counterLabel = counterMatch ? counterMatch[1] : terminal;
+  const cashFloat = session && session.status === "Open"
+    ? session.summary?.expectedCash ?? session.expectedCash ?? session.openingFloat
+    : 0;
   const sessionLabel =
     session && session.status === "Open"
-      ? "Register Open · Float " + Number(session.openingFloat || 0).toLocaleString("en-PH", { minimumFractionDigits: 2 })
+      ? "Register Open · Float " + Number(cashFloat || 0).toLocaleString("en-PH", { minimumFractionDigits: 2 })
       : "Register Closed";
 
   return (
@@ -45,33 +49,31 @@ export default function PosHeader() {
       <div className="pos-header__right">
         <div className="pos-header__meta">
           <DateTimeClock />
-          <RemoteScanner />
           <div className="pos-header__who">
-            Counter {COUNTER} · {cashierName} · {sessionLabel}
+            Counter {counterLabel} · {cashierName} · {sessionLabel}
           </div>
         </div>
-        <div className="pos-header__avatar" aria-hidden="true">
-          <Icon name="user" />
-        </div>
-        {onLogout && (
-          <button
-            type="button"
-            className="pos-header__logout"
-            onClick={onLogout}
-            title="Sign out of PosPilot"
-          >
-            Sign out
-          </button>
-        )}
-        {session && session.status === "Open" && (
-          <button
-            type="button"
-            className="pos-header__logout"
-            onClick={() => dispatchAction("registerActions")}
-            title="Open register actions"
-          >
-            Register
-          </button>
+        {(onLogout || (session && session.status === "Open")) && (
+          <div className="pos-header__actions">
+            {onLogout && (
+              <button
+                type="button"
+                className="pos-header__action"
+                onClick={onLogout}
+              >
+                Sign Out
+              </button>
+            )}
+            {session && session.status === "Open" && (
+              <button
+                type="button"
+                className="pos-header__action pos-header__action--primary"
+                onClick={() => dispatchAction("registerActions")}
+              >
+                Register
+              </button>
+            )}
+          </div>
         )}
         {state.standby && (
           <span className="pos-header__standby">Ready</span>

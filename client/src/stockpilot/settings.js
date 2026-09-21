@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 // Central default logo — used whenever no custom store logo has been uploaded.
-import defaultStoreLogo from "../cashierpos/assets/logo.png";
+import defaultStoreLogo from "../../../build/pospilot-logo.png";
 
 export const SETTINGS_STORAGE_KEY = "pospilot.settings";
 
@@ -10,7 +10,7 @@ export const SETTINGS_STORAGE_KEY = "pospilot.settings";
  * reads from here — no separate hard-coded store names/addresses/TINs/logo.
  */
 export const DEFAULT_STORE_SETTINGS = {
-  storeName: "St. Isidore's Pharmacy",
+  storeName: "",
   logoUrl: "",
   address: "",
   phone: "",
@@ -28,11 +28,11 @@ export const DEFAULT_STORE_SETTINGS = {
   tagline: "",
   authorizedRep: "",
   cashierManagerContact: "",
-  receiptFooter: "Thank you for shopping with us.",
+  receiptFooter: "",
   taxRate: "0",
-  defaultLocation: "Main Store",
+  defaultLocation: "",
   lowStockThreshold: "10",
-  terminalName: "POS-02",
+  terminalName: "",
   priceOverrideMaxPct: "50",
   priceOverrideApprovalPct: "10",
   discountApprovalPct: "10",
@@ -40,6 +40,7 @@ export const DEFAULT_STORE_SETTINGS = {
   backupDir: "",
   idleTimeoutMinutes: "0",
   launchOnStartup: "false",
+  lanAccessEnabled: "false",
 };
 
 /** Back-compat alias so existing importers keep working unchanged. */

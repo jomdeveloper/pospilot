@@ -74,7 +74,10 @@ export function PosProvider({ children, runtime = null, initialSaleNumber = 1 })
     };
   });
   const stateRef = useRef(state);
+  const runtimeRef = useRef(runtime);
+  const holdInFlightRef = useRef(false);
   stateRef.current = state;
+  runtimeRef.current = runtime;
 
   useEffect(() => {
     persistState(state);
@@ -84,7 +87,7 @@ export function PosProvider({ children, runtime = null, initialSaleNumber = 1 })
     if (!runtime?.sessionToken) return undefined;
 
     let active = true;
-    api.getPendingSales(runtime.sessionToken)
+    const loadPendingSales = () => api.getPendingSales(runtime.terminal, runtime.sessionToken)
       .then((response) => {
         if (!active) return;
         const rows = Array.isArray(response?.pendingSales) ? response.pendingSales : [];
@@ -93,15 +96,18 @@ export function PosProvider({ children, runtime = null, initialSaleNumber = 1 })
           .map((sale) => ({
             id: sale.id,
             invoiceNo: `PS-${String(sale.id).padStart(6, "0")}`,
-            cashier: sale.recalledByUsername || runtime.cashierName || "Cashier",
+            cashier: sale.recalledByUsername || sale.transferredByUsername || runtime.cashierName || "Cashier",
             lines: Array.isArray(sale.payload?.cart) ? sale.payload.cart.map((line) => ({
               id: line.id || `${sale.id}-${line.productId || line.id || Math.random()}`,
               qty: Number(line.qty) || 1,
               price: Number(line.price) || 0,
+              discountPct: Number(line.discountPct) || 0,
               name: line.name || `Item ${line.productId || ""}`,
               sku: line.sku || line.barcode || "",
               barcode: line.barcode || "",
               productId: line.productId || line.id || null,
+              generic: line.generic || "",
+              category: line.category || "",
               customerType: sale.customerType || "walkin",
               customer: sale.customerName || "Walk-in",
               taxType: String(line.taxType || line.tax_type || "VATABLE").toUpperCase(),
@@ -113,6 +119,10 @@ export function PosProvider({ children, runtime = null, initialSaleNumber = 1 })
             customerId: sale.memberId || "",
             amountDue: Number(sale.payload?.total || 0),
             heldAt: sale.createdAt || new Date().toISOString(),
+            destinationTerminal: sale.destinationTerminal || null,
+            sourceTerminal: sale.originTerminal || sale.payload?.sourceTerminal || null,
+            transferredAt: sale.transferredAt || null,
+            transferredBy: sale.transferredByUsername || null,
           }));
 
         // The server is authoritative after login. Replace localStorage even
@@ -122,10 +132,14 @@ export function PosProvider({ children, runtime = null, initialSaleNumber = 1 })
       })
       .catch(() => {});
 
+    loadPendingSales();
+    const refreshTimer = setInterval(loadPendingSales, 10000);
+
     return () => {
       active = false;
+      clearInterval(refreshTimer);
     };
-  }, [runtime?.sessionToken, runtime?.cashierName]);
+  }, [runtime?.sessionToken, runtime?.cashierName, runtime?.terminal]);
 
   // Derived money summary — recomputed whenever the cart changes.
   const summary = useMemo(
@@ -164,19 +178,40 @@ export function PosProvider({ children, runtime = null, initialSaleNumber = 1 })
       showToast: (message, persist = false, kind = null) =>
         dispatch({ type: "SHOW_TOAST", message, persist, kind }),
       hideToast: () => dispatch({ type: "HIDE_TOAST" }),
-      recallSale: (index) => {
+      recallSale: async (index) => {
         const target = stateRef.current.heldSales[index];
-        if (target && runtime?.sessionToken && target.id) {
-          api.recallPendingSale(target.id, runtime.sessionToken).catch(() => {
-            dispatch({ type: "RESTORE_HELD_SALE", sale: target, index });
-          });
+        const currentRuntime = runtimeRef.current;
+        if (!target) return false;
+        if (holdInFlightRef.current) return false;
+        holdInFlightRef.current = true;
+        try {
+          if (stateRef.current.cart.length > 0) {
+            await holdCurrentTransaction(stateRef.current);
+          }
+          if (currentRuntime?.sessionToken && target.id) {
+            if (target.destinationTerminal) {
+              await api.claimPendingSale(target.id, {
+                terminal: currentRuntime.terminal,
+                cashierSessionId: stateRef.current.session?.id,
+              }, currentRuntime.sessionToken);
+            } else {
+              await api.recallPendingSale(target.id, currentRuntime.sessionToken);
+            }
+          }
+          dispatch({ type: "RECALL_SALE", index });
+          return true;
+        } catch (error) {
+          dispatch({ type: "SHOW_TOAST", message: error?.message || "Unable to claim transaction", persist: true, kind: "error" });
+          return false;
+        } finally {
+          holdInFlightRef.current = false;
         }
-        dispatch({ type: "RECALL_SALE", index });
       },
       pressButton: (id) => dispatch({ type: "PRESS_BUTTON", id }),
       clearPress: () => dispatch({ type: "CLEAR_PRESS" }),
       clearFlash: () => dispatch({ type: "CLEAR_FLASH" }),
-      setSaleNumber: (number) => dispatch({ type: "SET_SALE_NUMBER", number })
+      setSaleNumber: (number) => dispatch({ type: "SET_SALE_NUMBER", number }),
+      transferSale
     }),
     [runtime?.sessionToken]
   );
@@ -202,15 +237,10 @@ export function PosProvider({ children, runtime = null, initialSaleNumber = 1 })
     return currentLine;
   }
 
-  function holdSale() {
-    if (state.cart.length === 0) {
-      actions.showToast("Nothing to hold", false, "hold");
-      return;
-    }
-
-    const summary = recomputeTotals({ cart: state.cart, customerType: state.customerType });
-    const payload = {
-      cart: state.cart.map((line) => ({
+  function buildPendingPayload(current) {
+    const totals = recomputeTotals({ cart: current.cart, customerType: current.customerType });
+    return {
+      cart: current.cart.map((line) => ({
         id: line.id,
         productId: line.productId || line.id,
         sku: line.sku || "",
@@ -218,55 +248,123 @@ export function PosProvider({ children, runtime = null, initialSaleNumber = 1 })
         name: line.name,
         qty: line.qty,
         price: line.price,
+        discountPct: line.discountPct || 0,
+        generic: line.generic || "",
+        category: line.category || "",
+        taxType: line.taxType || "VATABLE",
         seniorDiscountEligible: line.seniorDiscountEligible,
         pwdDiscountEligible: line.pwdDiscountEligible,
       })),
-      discountPct: summary.discountPct || 0,
-      subtotal: summary.subtotal || 0,
-      vat: summary.vat || 0,
-      total: summary.amountDue || 0,
-      customerType: state.customerType || "walkin",
-      customerName: state.customer || "Walk-in Customer",
-      memberId: state.customerId || null,
+      discountPct: totals.discountPct || 0,
+      subtotal: totals.subtotal || 0,
+      vat: totals.vat || 0,
+      total: totals.amountDue || 0,
+      customerType: current.customerType || "walkin",
+      customerName: current.customer || "Walk-in Customer",
+      memberId: current.customerId || null,
     };
+  }
 
-    const requestPromise = runtime?.sessionToken
+  function holdCurrentTransaction(current) {
+    const payload = buildPendingPayload(current);
+    const currentRuntime = currentRuntimeFor();
+    const requestPromise = currentRuntime?.sessionToken
       ? api.createPendingSale({
-          cashierSessionId: state.session?.id || null,
+          cashierSessionId: current.session?.id || null,
           customerName: payload.customerName,
           customerType: payload.customerType,
           memberId: payload.memberId,
           payload,
-        }, runtime.sessionToken)
+        }, currentRuntime.sessionToken)
       : Promise.resolve(null);
 
-    requestPromise
-      .then((response) => {
-        const created = response?.pendingSale;
-        if (created) {
-          dispatch({
-            type: "HOLD_SALE",
-            extra: {
-              id: created.id,
-              customer: created.customerName,
-              customerType: created.customerType,
-              customerId: created.memberId || "",
-              invoiceNo: `PS-${String(created.id).padStart(6, "0")}`,
-              cashier: runtime?.cashierName || "Cashier",
-              heldAt: created.createdAt || new Date().toLocaleTimeString(),
-              amountDue: payload.total,
-              pendingSaleId: created.id,
-              lines: state.cart.map((line) => ({ ...line })),
-            },
-          });
-        } else {
-          dispatch({ type: "HOLD_SALE" });
-        }
+    return requestPromise.then((response) => {
+      const created = response?.pendingSale;
+      dispatch({
+        type: "HOLD_SALE",
+        extra: created ? {
+          id: created.id,
+          customer: created.customerName,
+          customerType: created.customerType,
+          customerId: created.memberId || "",
+          invoiceNo: `PS-${String(created.id).padStart(6, "0")}`,
+          cashier: currentRuntime?.cashierName || "Cashier",
+          heldAt: created.createdAt || new Date().toLocaleTimeString(),
+          amountDue: payload.total,
+          pendingSaleId: created.id,
+          lines: current.cart.map((line) => ({ ...line })),
+        } : undefined,
+      });
+      return true;
+    });
+  }
+
+  function currentRuntimeFor() {
+    return runtimeRef.current || {};
+  }
+
+  function holdSale() {
+    if (state.cart.length === 0 || holdInFlightRef.current) {
+      if (state.cart.length === 0) actions.showToast("Nothing to hold", false, "hold");
+      return;
+    }
+
+    holdInFlightRef.current = true;
+
+    holdCurrentTransaction(state)
+      .then(() => {
         actions.showToast("Sale held (" + formatInvoiceNo(state.saleNumber) + ")", false, "hold");
       })
-      .catch(() => {
-        dispatch({ type: "HOLD_SALE" });
-        actions.showToast("Sale held locally", false, "hold");
+      .catch((error) => {
+        actions.showToast("Unable to hold sale: " + (error?.message || "save failed"), true, "error");
+      })
+      .finally(() => {
+        holdInFlightRef.current = false;
+      });
+  }
+
+  function transferSale(destinationTerminal) {
+    const current = stateRef.current;
+    const currentRuntime = runtimeRef.current;
+    if (!current.cart.length || holdInFlightRef.current) return Promise.resolve(false);
+    holdInFlightRef.current = true;
+    const payload = buildPendingPayload(current);
+    return api.createPendingSale({
+      cashierSessionId: current.session?.id || null,
+      customerName: payload.customerName,
+      customerType: payload.customerType,
+      memberId: payload.memberId,
+      destinationTerminal,
+      payload,
+    }, currentRuntime?.sessionToken)
+      .then((response) => {
+        const created = response?.pendingSale;
+        if (!created) throw new Error("Transfer was not saved");
+        dispatch({
+          type: "HOLD_SALE",
+          extra: {
+            transferred: true,
+            id: created.id,
+            pendingSaleId: created.id,
+            invoiceNo: `PS-${String(created.id).padStart(6, "0")}`,
+            amountDue: payload.total,
+            lines: current.cart.map((line) => ({ ...line })),
+            customer: payload.customerName,
+            customerType: payload.customerType,
+            customerId: payload.memberId || "",
+            cashier: currentRuntime?.cashierName || "Cashier",
+            heldAt: created.createdAt || new Date().toLocaleTimeString(),
+          },
+        });
+        actions.showToast("Transaction transferred to " + destinationTerminal, false, "success");
+        return true;
+      })
+      .catch((error) => {
+        actions.showToast("Unable to transfer transaction: " + (error?.message || "save failed"), true, "error");
+        return false;
+      })
+      .finally(() => {
+        holdInFlightRef.current = false;
       });
   }
 
@@ -335,6 +433,11 @@ export function PosProvider({ children, runtime = null, initialSaleNumber = 1 })
 
       case "hold":
         holdSale();
+        break;
+
+      case "transfer":
+        if (state.cart.length === 0) actions.showToast("Nothing to transfer", false, "error");
+        else actions.openDialog({ type: "transfer" });
         break;
 
       case "pause":

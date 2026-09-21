@@ -26,7 +26,13 @@ function SummaryRow({ label, value, tone, bold }) {
 
 export default function CloseRegisterDialog() {
   const { state, actions, runtime } = usePos();
-  const close = () => actions.closeDialog();
+  const close = () => {
+    if (state.session && state.session.status === "Open") {
+      actions.openDialog({ type: "registerActions" });
+      return;
+    }
+    actions.closeDialog();
+  };
   const session = state.session;
 
   const summary = useMemo(() => (session ? session.summary : null), [session]);

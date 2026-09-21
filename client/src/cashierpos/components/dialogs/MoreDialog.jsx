@@ -18,35 +18,10 @@ export default function MoreDialog() {
 
   const ITEMS = [
     {
-      label: "Cash In",
-      desc: "Add cash to the drawer (extra change, deposit)",
-      run: () => dispatchAction("cashIn")
-    },
-    {
-      label: "Cash Out",
-      desc: "Remove cash from the drawer (petty cash, payout)",
-      run: () => dispatchAction("cashOut")
-    },
-    {
-      label: "Cash Drop / Safe Drop",
-      desc: "Manager only — move cash to the safe",
-      run: () => dispatchAction("cashDrop")
-    },
-    {
-      label: "Close Register",
-      desc: "Count the drawer and close this cashier session",
-      run: () => dispatchAction("closeRegister")
-    },
-    {
       label: "Void Transaction",
       desc: "Reverse a completed sale (manager approval required)",
       danger: true,
       run: () => actions.openDialog({ type: "transactionActions", mode: "void" })
-    },
-    {
-      label: "Refund / Return",
-      desc: "Return items from a completed sale",
-      run: () => actions.openDialog({ type: "transactionActions", mode: "refund" })
     },
     {
       label: "Reprint Receipt",

@@ -31,12 +31,23 @@ function toPosProduct(row) {
     category: row.category || row.product_type || "General",
     productType: row.product_type || row.productType || "OTC",
     generic: row.generic || "",
+    imageUrl: row.image_url || row.imageUrl || "",
     stock: Number(row.stock) || 0,
     taxType: String(row.tax_type || row.taxType || "VATABLE").toUpperCase(),
     seniorDiscountEligible: Boolean(row.senior_discount_eligible || row.seniorDiscountEligible),
     pwdDiscountEligible: Boolean(row.pwd_discount_eligible || row.pwdDiscountEligible),
     productId: Number(row.id) || row.id,
   };
+}
+
+/** Load the full live catalog for the inline cashier product list. */
+export async function listProducts() {
+  try {
+    const rows = await api.getProducts();
+    return (Array.isArray(rows) ? rows : []).map(toPosProduct).filter(Boolean);
+  } catch (_error) {
+    return [];
+  }
 }
 
 /**

@@ -166,6 +166,7 @@ db.exec(`
     sale_id INTEGER NOT NULL REFERENCES sales(id),
     product_id INTEGER REFERENCES products(id),
     quantity INTEGER NOT NULL CHECK (quantity > 0),
+    disposition TEXT NOT NULL DEFAULT 'resellable',
     refund_amount REAL NOT NULL DEFAULT 0,
     reason TEXT NOT NULL,
     refund_method TEXT NOT NULL DEFAULT 'cash',
@@ -395,33 +396,6 @@ db.exec(`
     ON register_cashier_activity(user_id, status);
 `);
 
-// Additive audit migrations for databases created before structured audit
-// metadata was introduced.
-const auditColumns = new Set(db.prepare('PRAGMA table_info(audit_logs)').all().map((column) => column.name));
-const addAuditColumn = (name, definition) => {
-  if (!auditColumns.has(name)) db.exec(`ALTER TABLE audit_logs ADD COLUMN ${name} ${definition}`);
-};
-addAuditColumn('category', "TEXT NOT NULL DEFAULT 'System'");
-addAuditColumn('terminal', 'TEXT');
-addAuditColumn('request_id', 'TEXT');
-addAuditColumn('ip_address', 'TEXT');
-addAuditColumn('user_agent', 'TEXT');
-db.exec('CREATE INDEX IF NOT EXISTS idx_audit_logs_created ON audit_logs(created_at DESC, id DESC)');
-db.exec('CREATE INDEX IF NOT EXISTS idx_audit_logs_actor ON audit_logs(actor_user_id, created_at DESC)');
-db.exec('CREATE INDEX IF NOT EXISTS idx_audit_logs_action ON audit_logs(action, created_at DESC)');
-db.exec('CREATE INDEX IF NOT EXISTS idx_audit_logs_entity ON audit_logs(entity_type, entity_id, created_at DESC)');
-
-// Additive migrations for databases created before cashier attribution was
-// introduced. SQLite has no IF NOT EXISTS form for ALTER TABLE ADD COLUMN.
-const columns = (table) => new Set(db.prepare(`PRAGMA table_info(${table})`).all().map((column) => column.name));
-const addColumn = (table, name, definition) => {
-  if (!columns(table).has(name)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${definition}`);
-};
-addColumn('sales', 'cashier_user_id', 'INTEGER REFERENCES users(id)');
-addColumn('sales', 'cashier_username', 'TEXT');
-addColumn('cash_transactions', 'actor_user_id', 'INTEGER');
-addColumn('cash_transactions', 'actor_username', 'TEXT');
-
 db.exec('CREATE INDEX IF NOT EXISTS idx_sales_cashier_session ON sales(cashier_session_id)');
 
 db.exec(`
@@ -482,14 +456,32 @@ db.exec(`
     created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
     recalled_at TEXT,
     recalled_by_user_id INTEGER,
-    recalled_by_username TEXT
+    recalled_by_username TEXT,
+    destination_terminal TEXT,
+    transferred_at TEXT,
+    transferred_by_user_id INTEGER REFERENCES users(id),
+    transferred_by_username TEXT,
+    current_session_id INTEGER REFERENCES cashier_sessions(id),
+    current_terminal TEXT,
+    version INTEGER NOT NULL DEFAULT 1,
+    completed_sale_id INTEGER REFERENCES sales(id)
   );
 `);
 
 db.exec('CREATE INDEX IF NOT EXISTS idx_approval_requests_status ON approval_requests(status, created_at DESC)');
 db.exec('CREATE INDEX IF NOT EXISTS idx_pending_sales_status ON pending_sales(status, created_at DESC)');
+db.exec('CREATE INDEX IF NOT EXISTS idx_pending_sales_destination ON pending_sales(destination_terminal, status, created_at DESC)');
+
+try {
+  db.exec("ALTER TABLE sale_returns ADD COLUMN disposition TEXT NOT NULL DEFAULT 'resellable'");
+} catch (error) {
+  if (!String(error.message || '').includes('duplicate column name')) throw error;
+}
 
 db.prepare("INSERT OR IGNORE INTO inventory_locations (name) VALUES ('Main Store')").run();
+db.prepare("INSERT OR IGNORE INTO inventory_locations (name) VALUES ('Damaged')").run();
+db.prepare("INSERT OR IGNORE INTO inventory_locations (name) VALUES ('Quarantine')").run();
+db.prepare("INSERT OR IGNORE INTO inventory_locations (name) VALUES ('Write-off')").run();
 const mainLocationId = db.prepare("SELECT id FROM inventory_locations WHERE name = 'Main Store'").get().id;
 db.prepare(`
   INSERT OR IGNORE INTO inventory_location_stock (location_id, product_id, quantity)
@@ -514,18 +506,6 @@ db.prepare('INSERT OR IGNORE INTO product_types (name, category_name, descriptio
   'Services',
   'Service offerings and labor'
 );
-
-// Force a one-time password change for accounts that still use the seeded
-// default credentials. New columns default to 0; the accounts created below
-// during bootstrap are explicitly marked 1, and any pre-existing database that
-// still carries the default hash gets upgraded here so old installs are just as
-// strict as fresh ones.
-db.prepare(
-  "UPDATE users SET must_change_password = 1 WHERE username = 'admin' AND password_hash = ? AND must_change_password = 0"
-).run(hashPassword('admin123', 'admin'));
-db.prepare(
-  "UPDATE users SET must_change_password = 1 WHERE username = 'cashier' AND password_hash = ? AND must_change_password = 0"
-).run(hashPassword('cashier123', 'cashier'));
 
 if (db.prepare('SELECT COUNT(*) AS count FROM users').get().count === 0) {
   const insertUser = db.prepare(`

@@ -14,24 +14,18 @@ import Icon from "./Icon.jsx";
 import { useButtonFlash } from "./useButtonFlash.js";
 
 const QUICK_ACTIONS = [
-  { key: "F2", name: "Search", icon: "tag", action: "productSearch" },
-  { key: "F3", name: "Quantity", icon: "qty", action: "quantity" },
-  { key: "F4", name: "Customer", icon: "user", action: "customer" },
-  { key: "F5", name: "Discount", icon: "percent", action: "discount" },
-  { key: "DEL", name: "Remove", icon: "void", action: "void" },
-  { key: "F10", name: "More", icon: "more", action: "more" }
 ];
 
 function QuickActionButton({ def }) {
   const { state, actions, dispatchAction } = usePos();
   // The same id scheme the global shortcuts flash in App.jsx (`bottom-<key>`).
-  const buttonId = `bottom-${def.key}`;
+  const buttonId = def.key ? `bottom-${def.key}` : `bottom-${def.name.toLowerCase().replace(/\s+/g, "-")}`;
   const isPressed = state.pressedButton === buttonId;
   useButtonFlash(isPressed, actions.clearPress);
 
   const handleClick = () => {
     actions.pressButton(buttonId);
-    dispatchAction(def.action);
+    if (def.action) dispatchAction(def.action);
   };
 
   return (
@@ -39,12 +33,14 @@ function QuickActionButton({ def }) {
       type="button"
       className={"quick-action" + (isPressed ? " is-pressed" : "")}
       onClick={handleClick}
-      title={def.name + " (" + def.key + ")"}
+      title={def.key ? def.name + " (" + def.key + ")" : def.name}
     >
-      <span className="quick-action__key">{def.key}</span>
-      <span className="quick-action__icon" aria-hidden="true">
-        <Icon name={def.icon} />
-      </span>
+      {def.key && <span className="quick-action__key">{def.key}</span>}
+      {def.icon && (
+        <span className="quick-action__icon" aria-hidden="true">
+          <Icon name={def.icon} />
+        </span>
+      )}
       <span className="quick-action__name">{def.name}</span>
     </button>
   );
@@ -54,7 +50,7 @@ export default function QuickActions() {
   return (
     <div className="quick-actions">
       {QUICK_ACTIONS.map((def) => (
-        <QuickActionButton key={def.key + def.action} def={def} />
+        <QuickActionButton key={def.name + def.key} def={def} />
       ))}
     </div>
   );

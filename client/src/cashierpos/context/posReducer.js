@@ -16,6 +16,20 @@ import { formatInvoiceNo, invoiceNoToNumber, recomputeTotals } from "../utils/ca
    same message is shown repeatedly). */
 let toastSeq = 0;
 
+function sameProduct(line, product) {
+  const productId = product.productId || product.id || null;
+  const lineProductId = line.productId || null;
+  if (productId != null && lineProductId != null && String(productId) === String(lineProductId)) return true;
+
+  const sku = String(product.sku || "").trim().toLowerCase();
+  const lineSku = String(line.sku || "").trim().toLowerCase();
+  if (sku && lineSku && sku === lineSku) return true;
+
+  const barcode = String(product.barcode || "").trim().toLowerCase();
+  const lineBarcode = String(line.barcode || "").trim().toLowerCase();
+  return Boolean(barcode && lineBarcode && barcode === lineBarcode);
+}
+
 export function createInitialState(initialSaleNumber = 1) {
   const start =
     Number(initialSaleNumber) && Number(initialSaleNumber) > 0
@@ -94,12 +108,12 @@ export function posReducer(state, action) {
       const qty = action.qty || 1;
       if (!product) return state;
 
-      const existing = state.cart.find((l) => l.sku === product.sku);
+      const existing = state.cart.find((line) => sameProduct(line, product));
       if (existing) {
         return {
           ...state,
           cart: state.cart.map((l) =>
-            l.sku === product.sku ? { ...l, qty: l.qty + qty } : l
+            sameProduct(l, product) ? { ...l, qty: l.qty + qty } : l
           ),
           selectedIndex: state.cart.indexOf(existing),
           flashLineId: existing.id
@@ -274,11 +288,18 @@ export function posReducer(state, action) {
       };
       return {
         ...state,
-        heldSales: [...state.heldSales, sale],
+        heldSales: action?.extra?.transferred ? state.heldSales : [...state.heldSales, sale],
         pendingSaleId: null,
         saleNumber: state.saleNumber + 1,
         cart: [],
-        selectedIndex: null
+        selectedIndex: null,
+        customer: null,
+        customerType: "walkin",
+        customerId: "",
+        standby: true,
+        paused: false,
+        searchQuery: "",
+        nextLineId: 1
       };
     }
 

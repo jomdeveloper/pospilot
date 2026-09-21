@@ -2,14 +2,14 @@
  * TransactionTable.jsx
  * --------------------------------------------------------------------------
  * Current-transaction line table in the design's column set:
- * Item / Qty / Price / Disc / Disc Amt / Subtotal.
+ * Item / Qty / Price / Subtotal.
  * Removing an item is still possible via the DEL key or the Quick Actions
  * "Remove Item" tile. Keeps the selected-row tracking, the added-item flash
  * and the arrow-key scroll-into-view behaviour.
  */
 import React, { useEffect, useRef, useState } from "react";
 import { usePos } from "../context/PosContext";
-import { formatPeso, lineDiscount, lineNet } from "../utils/calculations";
+import { formatPeso, lineNet } from "../utils/calculations";
 
 export default function TransactionTable() {
   const { state, actions } = usePos();
@@ -55,8 +55,10 @@ export default function TransactionTable() {
     return () => window.removeEventListener("resize", update);
   }, [state.cart.length]);
 
+  const hasRows = state.cart.length > 0;
+
   return (
-    <section className="transaction-table" aria-label="Current transaction">
+    <section className={"transaction-table" + (hasRows ? " transaction-table--filled" : " transaction-table--empty")} aria-label="Current transaction">
       {/* Header row lives OUTSIDE the scroll area so the vertical scrollbar
           only ever sits beside the body rows — never across the header. */}
       <div
@@ -69,8 +71,6 @@ export default function TransactionTable() {
               <th className="col-item">Item</th>
               <th className="col-qty">Qty</th>
               <th className="col-price">Price</th>
-              <th className="col-disc-pct">Disc</th>
-              <th className="col-disc-amt">Disc Amt</th>
               <th className="col-total">Subtotal</th>
             </tr>
           </thead>
@@ -81,7 +81,6 @@ export default function TransactionTable() {
         <table>
           <tbody>
             {state.cart.map((line, index) => {
-              const discAmt = lineDiscount(line);
               const discountCustomer = state.customerType === "senior" || state.customerType === "pwd";
               const discountLabel = state.customerType === "senior" ? "Senior discount" : "PWD discount";
               const discountEligible = state.customerType === "senior"
@@ -95,7 +94,6 @@ export default function TransactionTable() {
                 <tr key={line.id} className={rowClass} onClick={() => actions.selectLine(index)}>
                   <td className="tx-row__item">
                     <span className="tx-row__name">{line.name}</span>
-                    <span className="tx-row__sku">{line.sku}</span>
                     {discountCustomer && (
                       <span className={"tx-row__eligibility " + (discountEligible ? "is-eligible" : "is-ineligible")}>
                         {discountLabel} {discountEligible ? "eligible" : "not eligible"}
@@ -106,14 +104,6 @@ export default function TransactionTable() {
                     <span className="qty-val">{line.qty}</span>
                   </td>
                   <td className="tx-row__price">{formatPeso(line.price)}</td>
-                  <td className="tx-row__disc-pct">
-                    <span className={"disc-badge" + (line.discountPct > 0 ? "" : " disc-badge--none")}>
-                      {line.discountPct > 0 ? line.discountPct + "%" : "\u2014"}
-                    </span>
-                  </td>
-                  <td className="tx-row__disc-amt">
-                    {discAmt > 0 ? "-" + formatPeso(discAmt) : "\u2014"}
-                  </td>
                   <td className="tx-row__total">{formatPeso(lineNet(line))}</td>
                 </tr>
               );

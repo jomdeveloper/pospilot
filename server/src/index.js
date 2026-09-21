@@ -30,8 +30,9 @@ const { auditSystemEvent } = require('./audit');
 const serverPackage = require('../package.json');
 
 // Default to loopback-only so the API is never exposed to the rest of the LAN
-// unless an operator explicitly opts in (the HTTPS dev/phone launchers set HOST=0.0.0.0).
-const HOST = process.env.HOST || '127.0.0.1';
+// unless an operator explicitly opts in (the HTTPS dev/phone launchers set
+// HOST=0.0.0.0 or the packaged app is launched with POSPILOT_LAN_MODE=1).
+const HOST = process.env.HOST || (process.env.POSPILOT_LAN_MODE === '1' ? '0.0.0.0' : '127.0.0.1');
 const PORT = process.env.PORT || 4000;
 
 function createServer() {
@@ -172,6 +173,12 @@ function start(port = PORT) {
     if (serverOptions) {
       // HTTPS: build the server explicitly because https.Server is not an
       // Express app and must be created with the app as its request handler.
+      logger.info('server', 'Starting HTTPS server', {
+        host: HOST,
+        port,
+        keyPath: process.env.HTTPS_KEY_PATH,
+        certPath: process.env.HTTPS_CERT_PATH,
+      });
       server = https.createServer(serverOptions, app);
       server.on('error', onError);
       server.listen(port, HOST, () => {
@@ -184,6 +191,12 @@ function start(port = PORT) {
       // just listeners and don't expose address()/close()). Resolving the app
       // here breaks callers that call server.address() (tests) or server.close()
       // (Electron shutdown), so resolve the server `listen()` produced.
+      logger.warn('server', 'Starting HTTP server without HTTPS certificate', {
+        host: HOST,
+        port,
+        keyPath: process.env.HTTPS_KEY_PATH || null,
+        certPath: process.env.HTTPS_CERT_PATH || null,
+      });
       server = app.listen(port, HOST, () => {
         logger.info('server', `PosPilot server listening on http://${HOST}:${port}`);
         scheduleSessionCleanup();

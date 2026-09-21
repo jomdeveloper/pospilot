@@ -27,6 +27,8 @@ import TransactionActionsDialog from "./TransactionActionsDialog.jsx";
 import ReprintDialog from "./ReprintDialog.jsx";
 import RepeatedBarcodeDialog from "./RepeatedBarcodeDialog.jsx";
 import RegisterActionsDialog from "./RegisterActionsDialog.jsx";
+import TransferDialog from "./TransferDialog.jsx";
+import RefundAuthorizationDialog from "./RefundAuthorizationDialog.jsx";
 
 export default function DialogHost() {
   const { state, runtime } = usePos();
@@ -60,9 +62,11 @@ export default function DialogHost() {
     case "priceCheck":
       return <PriceCheckDialog key="priceCheck" />;
     case "productSearch":
-      return <ProductSearchDialog key="productSearch" />;
+      return <ProductSearchDialog key="productSearch" dialog={dialog} />;
     case "recall":
       return <RecallDialog key="recall" />;
+    case "transfer":
+      return <TransferDialog key="transfer" />;
     case "payment":
       return <PaymentDialog key={"payment-" + dialog.method} dialog={dialog} />;
     case "more":
@@ -75,6 +79,8 @@ export default function DialogHost() {
       return <CancelTransactionDialog key="cancelTransaction" />;
     case "transactionActions":
       return <TransactionActionsDialog key="transactionActions" initialMode={dialog.mode || "void"} />;
+    case "refundAuthorization":
+      return <RefundAuthorizationDialog key="refundAuthorization" dialog={dialog} />;
     case "reprint":
       return <ReprintDialog key="reprint" />;
     case "registerActions":

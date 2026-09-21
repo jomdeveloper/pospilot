@@ -104,10 +104,35 @@ export default function PaymentDialog({ dialog }) {
     };
   };
 
+  // Idempotency: keep ONE transaction reference while the SAME cart is being
+  // retried. If the server committed but the response was lost, the retry sends
+  // the same SI-###### reference and the server returns the existing sale
+  // instead of charging and deducting stock a second time. Changing the cart or
+  // the payment method mints a fresh reference.
+  const submittedAttempt = useRef(null);
+
+  const cartFingerprint = () =>
+    JSON.stringify({
+      items: state.cart.map((l) => [l.productId != null ? l.productId : l.sku, l.qty, Math.round(Number(l.price) * 100), Number(l.discountPct) || 0]),
+      customer: state.customer,
+      customerType: state.customerType,
+      customerId: state.customerId,
+      method,
+      session: state.session ? state.session.id : null,
+      pendingSaleId: state.pendingSaleId || null,
+    });
+
   const processTransaction = async () => {
     // Reserve the invoice number up-front so the printed receipt uses the SAME
     // number that is sent to the server (and stored as the sale's reference).
-    const invoiceNo = nextInvoiceNo();
+    const fingerprint = cartFingerprint();
+    let invoiceNo;
+    if (submittedAttempt.current && submittedAttempt.current.fingerprint === fingerprint) {
+      invoiceNo = submittedAttempt.current.invoiceNo; // idempotent retry of the same cart
+    } else {
+      invoiceNo = nextInvoiceNo();
+      submittedAttempt.current = { invoiceNo, fingerprint };
+    }
     setStage("processing");
 
     // Persist the sale to the PosPilot backend first. Only when the server
@@ -142,14 +167,6 @@ export default function PaymentDialog({ dialog }) {
       actions.showToast("Unable to save the sale: " + ((err && err.message) || "server unreachable"), true, "error");
       setStage("confirm");
       return;
-    }
-
-    if (state.pendingSaleId && runtime?.sessionToken) {
-      try {
-        await api.completePendingSale(state.pendingSaleId, runtime.sessionToken);
-      } catch (err) {
-        console.error("[pos] pending sale completion update failed:", (err && err.message) || err);
-      }
     }
 
     // Build the receipt from the SERVER-AUTHORITATIVE numbers so the printed

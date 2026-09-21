@@ -14,7 +14,7 @@ import barcodeScan from "../assets/barcode-scan.png";
 
 const MAX_SCAN_ADD_QTY = 100000;
 
-export default function BarcodeSearch() {
+export default function BarcodeSearch({ visible = true }) {
   const { state, actions } = usePos();
   const inputRef = useRef(null);
   const query = state.searchQuery;
@@ -29,9 +29,9 @@ export default function BarcodeSearch() {
     if (dialogOpen && query) actions.setSearchQuery("");
   }, [dialogOpen, query, actions]);
 
-  const commit = async () => {
+  const commit = async (scanCode = query) => {
     if (dialogOpen || dialogScanLockRef.current) return;
-    const q = query.trim();
+    const q = String(scanCode || "").trim();
     if (!q) return;
     if (processingRef.current) {
       const previous = lastScanRef.current;
@@ -98,8 +98,16 @@ export default function BarcodeSearch() {
     }
   };
 
+  useEffect(() => {
+    const handleExternalScan = (event) => {
+      if (typeof event.detail === "string") commit(event.detail);
+    };
+    window.addEventListener("pospilot:barcode-scan", handleExternalScan);
+    return () => window.removeEventListener("pospilot:barcode-scan", handleExternalScan);
+  });
+
   return (
-    <div className="barcode-search" aria-label="Scan barcode">
+    <div className={"barcode-search" + (visible ? "" : " barcode-search--hidden")} aria-label="Scan barcode">
       <div className="barcode-search__field">
         {/* Barcode icon — absolutely positioned so it NEVER contributes to the
             field height; text gets left padding to clear it. */}
@@ -110,12 +118,13 @@ export default function BarcodeSearch() {
           aria-hidden="true"
           draggable={false}
         />
+        <span className="barcode-search__key" aria-hidden="true">F1</span>
         <input
           id="product-search-input"
           ref={inputRef}
           className="barcode-search__input"
           type="text"
-          placeholder="Scan barcode…  (F1 to focus)"
+          placeholder="Scan barcode…"
           autoComplete="off"
           autoCorrect="off"
           autoCapitalize="off"

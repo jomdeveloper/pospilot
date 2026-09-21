@@ -78,16 +78,31 @@
     box-shadow: inset 0 1px 0 rgba(255, 255, 255, .6), 0 3px 8px rgba(0, 0, 0, .08);
   }
   .standby__desc strong { @apply text-[#2f7fd8]; }
+  .register-gate__actions {
+    @apply mt-3 flex items-center justify-center gap-3;
+  }
+  .standby__new,
+  .standby__logout {
+    @apply relative flex-1 cursor-pointer rounded-xl px-8 py-3.5 text-[15px] font-extrabold;
+    min-width: 180px;
+  }
   .standby__new {
-    @apply relative mt-3 cursor-pointer rounded-xl px-8 py-3.5 text-[15px] font-extrabold text-white;
+    @apply text-white;
     background: linear-gradient(180deg, #3b82f6, #1d4ed8);
     border: 1px solid #1e40af;
     box-shadow: inset 0 1px 0 rgba(255, 255, 255, .5), inset 0 -3px 6px rgba(0, 0, 0, .18), 0 3px 6px rgba(0, 0, 0, .22);
   }
   .standby__new:hover { filter: brightness(1.06); }
   .standby__new.is-pressed { animation: btnFlash 0.26s ease; }
-  .standby__start { min-width: 280px; }
-  .standby__resume { min-width: 280px; }
+  .standby__logout {
+    @apply text-[#223a5d];
+    background: linear-gradient(180deg, #ffffff, #edf4ff);
+    border: 1px solid #bfd0e6;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .8), 0 3px 6px rgba(19, 36, 54, .08);
+  }
+  .standby__logout:hover { filter: brightness(1.02); }
+  .standby__start { min-width: 300px; }
+  .standby__resume { min-width: 300px; }
   .standby__key {
     @apply absolute right-[9px] top-[7px] inline-block rounded px-[5px] py-px text-[9px] font-extrabold leading-[1.35] text-white;
     background: rgba(255, 255, 255, 0.16);
@@ -96,7 +111,9 @@
 
   /* ============================ Header ================================= */
   .pos-header {
-    @apply flex flex-none items-center justify-between gap-4 px-[26px];
+    @apply flex flex-none items-center justify-between gap-4;
+    padding-left: 12px;
+    padding-right: 12px;
     /* Fixed header height (40px content + 2Ã—18px padding) so the larger
        logo can NEVER grow it. */
     height: 76px;
@@ -110,8 +127,9 @@
   .pos-header__brand { @apply relative flex items-center; }
 
   .pos-brand__copy {
-    /* Clear the absolutely-positioned 50px logo (50px + 12px gap). */
-    @apply ml-[62px];
+    /* Give the logo and store name a cleaner separation while keeping the
+       header compact. */
+    @apply ml-[58px];
   }
 
   .pos-brand__logo {
@@ -140,7 +158,27 @@
 
   .pos-header__right { @apply flex items-center gap-3; }
 
-  .pos-header__meta { @apply flex flex-col items-end gap-0.5 text-right; }
+  .pos-header__actions {
+    @apply flex items-center gap-2.5;
+  }
+  .pos-header__action {
+    @apply inline-flex items-center justify-center rounded-[10px] px-3.5 py-2 text-[12px] font-extrabold leading-none text-[#223a5d];
+    min-height: 38px;
+    border: 1px solid #bfd0e6;
+    background: linear-gradient(180deg, #ffffff, #edf4ff);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.8), 0 2px 6px rgba(19, 36, 54, .08);
+  }
+  .pos-header__action--primary {
+    @apply text-white;
+    border-color: #1e40af;
+    background: linear-gradient(180deg, #3b82f6, #1d4ed8);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.5), inset 0 -3px 6px rgba(0,0,0,.18), 0 3px 6px rgba(0,0,0,.22);
+  }
+
+  .pos-header__meta {
+    @apply flex flex-col items-end gap-0.5 text-right;
+    padding-right: 6px;
+  }
 
   .pos-header__who { @apply text-[13px] font-bold text-[#334155]; }
 
@@ -160,20 +198,13 @@
     border-radius: 9999px;
     flex-shrink: 0;
   }
-
-  .pos-header__avatar {
-    @apply flex h-[38px] w-[38px] items-center justify-center rounded-full text-[17px] text-[#4a617c];
-    background: linear-gradient(180deg, #ffffff, #eaf1fb);
-    border: 1px solid #cdddf0;
-    box-shadow: inset 0 2px 5px rgba(0, 0, 0, .08);
+  .pos-footer__badge {
+    @apply inline-flex items-center text-[11px] font-semibold text-[#4a617c];
+    white-space: nowrap;
   }
-  .pos-header__avatar svg {
-    @apply h-[20px] w-[20px];
-    fill: none;
-    stroke: currentColor;
-    stroke-width: 1.8;
-    stroke-linecap: round;
-    stroke-linejoin: round;
+  .pos-footer__scanner {
+    @apply inline-flex items-center gap-1.5 text-[11px] font-semibold text-[#4a617c];
+    white-space: nowrap;
   }
 
   /* Standby chip in the header (shown while no transaction is in progress). */
@@ -183,21 +214,271 @@
     border: 1px solid #cdddf0;
     box-shadow: inset 0 2px 5px rgba(0, 0, 0, .08);
   }
-
   /* Live clock chip (header) */
   .datetime { @apply flex items-baseline justify-end gap-2 text-[12.5px] font-semibold text-[#334155]; }
   .datetime__sep { @apply text-[#64748b]; }
   .datetime__clock { @apply text-[14px] font-bold tabular-nums text-[#132436]; }
   /* ============================ Toolbar ================================ */
   .pos-workspace {
-    @apply flex min-w-0 flex-1 flex-col gap-4 px-6 py-[22px];
-    /* The area OUTSIDE the table card / search field — transparent so the
-       frame's gradient shows through; the table card stands out on it. */
+    @apply flex min-w-0 flex-1 flex-col gap-0 p-0;
+    /* The area OUTSIDE the table card / search field — keep it flush to the
+       frame edges and remove the extra inner margin around the cart. */
     background: transparent;
   }
 
-  .pos-toolbar { @apply flex gap-2.5; }
+  .pos-toolbar { @apply flex gap-0; }
   .pos-toolbar__search { @apply min-w-0 flex-1; }
+
+  .pos-product-list-toggle {
+    @apply relative inline-flex w-fit cursor-pointer items-center gap-2.5 overflow-hidden rounded-[14px] px-3.5 py-2 text-[12px] font-bold text-[#334155];
+    height: 46px;
+    box-sizing: border-box;
+    background: linear-gradient(145deg, rgba(255, 255, 255, .99), rgba(226, 235, 247, .96));
+    border: 1px solid rgba(121, 157, 202, .72);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .98), inset 0 -1px 0 rgba(117, 145, 177, .14), 0 3px 8px rgba(19, 36, 54, .12);
+    transition: border-color .18s ease, box-shadow .18s ease, color .18s ease, transform .18s ease;
+  }
+  .pos-product-list-toggle::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: -42%;
+    width: 28%;
+    transform: skewX(-20deg);
+    background: rgba(255, 255, 255, .42);
+    pointer-events: none;
+    transition: left .45s ease;
+  }
+  .pos-product-list-toggle:has(input:checked) {
+    color: #1743a5;
+    background: linear-gradient(145deg, #f2f8ff, #d8e9ff);
+    border-color: #6b9bd8;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .98), 0 4px 11px rgba(29, 78, 216, .2);
+  }
+  .pos-product-list-toggle__input {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    opacity: 0;
+  }
+  .pos-product-list-toggle__switch {
+    position: relative;
+    z-index: 1;
+    display: inline-flex;
+    width: 36px;
+    height: 21px;
+    flex: 0 0 auto;
+    align-items: center;
+    border-radius: 999px;
+    background: linear-gradient(180deg, #aebed1, #8195ad);
+    border: 1px solid #758aa3;
+    box-shadow: inset 0 1px 3px rgba(19, 36, 54, .28), 0 1px 2px rgba(19, 36, 54, .12);
+    transition: background .18s ease, border-color .18s ease;
+  }
+  .pos-product-list-toggle__thumb {
+    width: 15px;
+    height: 15px;
+    margin-left: 2px;
+    border-radius: 50%;
+    background: linear-gradient(145deg, #ffffff, #d9e5f2);
+    border: 1px solid rgba(104, 129, 157, .75);
+    box-shadow: 0 1px 3px rgba(19, 36, 54, .3);
+    transition: transform .18s ease, border-color .18s ease;
+  }
+  .pos-product-list-toggle__input:checked + .pos-product-list-toggle__switch {
+    background: linear-gradient(180deg, #3b82f6, #1d4ed8);
+    border-color: #1e40af;
+  }
+  .pos-product-list-toggle__input:checked + .pos-product-list-toggle__switch .pos-product-list-toggle__thumb {
+    border-color: #ffffff;
+    transform: translateX(15px);
+  }
+  .pos-product-list-toggle__input:focus-visible + .pos-product-list-toggle__switch {
+    outline: 2px solid #2563eb;
+    outline-offset: 2px;
+  }
+  .pos-product-list-toggle__copy {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    min-width: 112px;
+    flex-direction: column;
+    gap: 1px;
+    line-height: 1.1;
+  }
+  .pos-product-list-toggle__eyebrow {
+    color: #6b84a0;
+    font-size: 8px;
+    font-weight: 800;
+    letter-spacing: .11em;
+    line-height: 1;
+    text-transform: uppercase;
+  }
+  .pos-product-list-toggle__label { line-height: 1.15; }
+
+  .pos-product-list-controls {
+    @apply flex min-w-0 items-center gap-3;
+  }
+
+  .pos-product-catalog {
+    @apply flex min-w-0 flex-col gap-3;
+  }
+  .pos-product-catalog.is-open {
+    @apply rounded-[16px] p-3;
+    background: linear-gradient(145deg, rgba(248, 252, 255, .96), rgba(226, 237, 249, .96));
+    border: 1px solid #c4d5e9;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .9), 0 4px 10px rgba(19, 36, 54, .1);
+    animation: productCatalogReveal .24s cubic-bezier(.22, .75, .25, 1) both;
+  }
+  .pos-product-catalog.is-open .pos-product-list {
+    animation: productGridReveal .2s .06s ease-out both;
+  }
+  @keyframes productCatalogReveal {
+    from { opacity: 0; transform: translateY(-8px) scaleY(.96); }
+    to { opacity: 1; transform: translateY(0) scaleY(1); }
+  }
+  @keyframes productGridReveal {
+    from { opacity: 0; transform: translateY(-4px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .pos-product-list-search {
+    @apply flex w-full max-w-[460px] items-center rounded-[14px] p-1.5;
+    height: 46px;
+    box-sizing: border-box;
+    background: linear-gradient(145deg, rgba(255, 255, 255, .98), rgba(226, 235, 247, .96));
+    border: 1px solid rgba(121, 157, 202, .72);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .98), 0 3px 8px rgba(19, 36, 54, .12);
+  }
+  .pos-product-list-search input {
+    @apply h-full min-w-0 flex-1 rounded-[10px] bg-white px-3 py-2 text-[12px] font-semibold text-[#132436] outline-none;
+    border: 1px solid #d2dfed;
+  }
+  .pos-product-list-search input:focus {
+    border-color: #6b9bd8;
+    outline: 2px solid rgba(47, 127, 216, .2);
+  }
+  .pos-product-list {
+    @apply relative min-h-0 w-full overflow-hidden rounded-none;
+    max-height: 156px;
+    width: calc(100% + 24px);
+    margin-left: -12px;
+    margin-right: -12px;
+    padding-left: 12px;
+    padding-right: 12px;
+      background: transparent;
+      padding-top: 10px;
+    border: none;
+    border-top: 1px solid rgba(159, 186, 217, .7);
+  }
+  .pos-product-list__grid {
+    @apply flex gap-2.5 overflow-x-auto overflow-y-hidden p-2.5 pl-12 pr-12;
+    min-height: 150px;
+    padding-left: 56px;
+    padding-right: 56px;
+    scrollbar-width: thin;
+    scrollbar-color: #a9bfd7 transparent;
+    scroll-snap-type: x proximity;
+    scroll-padding-inline: 56px;
+    outline: none;
+  }
+  .pos-product-list__grid:focus-visible {
+    outline: 2px solid #6b9bd8;
+    outline-offset: -2px;
+  }
+  .pos-product-list__arrow {
+    @apply absolute top-1/2 z-10 flex h-8 w-8 -translate-y-1/2 cursor-pointer items-center justify-center rounded-full text-[20px] font-semibold leading-none text-[#315b8f];
+    background: rgba(255, 255, 255, .9);
+    border: 1px solid #b4c9df;
+    box-shadow: 0 2px 6px rgba(19, 36, 54, .14);
+    transition: background .16s ease, border-color .16s ease, box-shadow .16s ease, transform .16s ease;
+  }
+  .pos-product-list__arrow:hover {
+    background: #ffffff;
+    border-color: #6f9dce;
+    box-shadow: 0 4px 9px rgba(29, 78, 216, .18);
+  }
+  .pos-product-list__arrow:active { transform: translateY(-50%) scale(.94); }
+  .pos-product-list__arrow svg { width: 20px; height: 20px; stroke-width: 2.2; }
+  .pos-product-list__arrow--left { left: 6px; }
+  .pos-product-list__arrow--right { right: 6px; }
+  .pos-product-list__item {
+    @apply relative flex w-[250px] min-w-[250px] cursor-pointer items-center gap-3 overflow-hidden rounded-[12px] px-3 py-2.5 text-left;
+    min-height: 130px;
+    background: linear-gradient(145deg, #ffffff 0%, #f3f7fc 100%);
+    border: 1px solid #c5d7ea;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .95), 0 3px 7px rgba(19, 36, 54, .1);
+    scroll-snap-align: start;
+    transition: border-color .18s ease, box-shadow .18s ease, transform .18s ease;
+  }
+  .pos-product-list__item:hover {
+    border-color: #6b9bd8;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .98), 0 6px 12px rgba(29, 78, 216, .16);
+    transform: translateY(-1px);
+  }
+  .pos-product-list__item:focus-visible {
+    outline: 2px solid #2563eb;
+    outline-offset: 2px;
+  }
+  .pos-product-list__item.is-keyboard-selected {
+    border-color: #6b9bd8;
+    box-shadow: 0 0 0 2px rgba(37, 99, 235, .16), inset 0 1px 0 rgba(255, 255, 255, .98), 0 5px 10px rgba(29, 78, 216, .14);
+  }
+  .pos-product-list__visual,
+  .pos-product-list__image,
+  .pos-product-list__fallback {
+    width: 96px;
+    height: 96px;
+    flex: 0 0 96px;
+    border-radius: 12px;
+  }
+  .pos-product-list__image {
+    display: block;
+    object-fit: cover;
+    border: 2px solid #ffffff;
+    background: #edf4fb;
+    box-shadow: 0 2px 6px rgba(19, 36, 54, .16);
+  }
+  .pos-product-list__fallback {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: #2f7fd8;
+    background: linear-gradient(145deg, #eaf3ff, #d5e5f8);
+    border: 1px solid #b9cfe6;
+    box-shadow: 0 2px 5px rgba(19, 36, 54, .1);
+  }
+  .pos-product-list__fallback svg {
+    width: 20px;
+    height: 20px;
+    fill: none;
+    stroke: currentColor;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    stroke-width: 1.6;
+  }
+  .pos-product-list__details {
+    display: flex;
+    min-width: 0;
+    flex: 1;
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .pos-product-list__name {
+    @apply block w-full truncate text-[14px] font-bold text-[#132436];
+  }
+  .pos-product-list__meta {
+    @apply mt-1 block w-full truncate text-[10px] font-semibold uppercase tracking-[.25px] text-[#6b84a0];
+  }
+  .pos-product-list__price {
+    @apply mt-1.5 block rounded-md px-2 py-0.5 text-[13px] font-extrabold text-[#1743a5];
+    background: #e6f0fc;
+    border: 1px solid #c4d9f0;
+  }
+  .pos-product-list__state {
+    @apply px-4 py-5 text-center text-[12px] font-semibold text-[#6b84a0];
+  }
 
   .pos-toolbar__add {
     @apply cursor-pointer whitespace-nowrap rounded-xl px-5 py-3 text-[13px] font-bold text-white;
@@ -209,6 +490,20 @@
 
   /* Barcode / product search */
   .barcode-search { @apply relative; }
+  .barcode-search--hidden {
+    position: fixed;
+    top: 0;
+    right: -9999px;
+    left: auto;
+    width: 1px;
+    height: 1px;
+    margin: 0;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    clip-path: inset(50%);
+    white-space: nowrap;
+    pointer-events: none;
+  }
 
   .barcode-search__field {
     /* relative so the QR icon can be absolutely positioned inside it. */
@@ -235,9 +530,15 @@
     opacity: 0.95;
   }
 
+  .barcode-search__key {
+    @apply pointer-events-none absolute right-3 top-1/2 flex h-6 min-w-[28px] items-center justify-center rounded-md border border-[#bfd0ea] bg-[#edf4ff] px-1.5 text-[10px] font-black uppercase tracking-[0.08em] text-[#234a7b];
+    transform: translateY(-50%);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.8), 0 1px 2px rgba(19,36,54,.08);
+  }
   .barcode-search__input {
     @apply m-0 block h-full w-full min-w-0 flex-1 bg-transparent p-0 text-[13px] text-[#132436];
     padding-left: 44px;
+    padding-right: 42px;
     border: none;
     outline: none;
   }
@@ -245,21 +546,164 @@
   .barcode-search__input::placeholder { color: #6b84a0; }
   /* ============================ Cart table ============================= */
   .pos-cart {
-    @apply flex min-h-0 flex-1 overflow-hidden rounded-[16px];
-    /* Softly tinted (less pure white) so the table sheet isn't glaring. */
-    background: linear-gradient(180deg, #f5f8fc, #e9eff8);
-    border: 1px solid #cdddf0;
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .6), 0 3px 8px rgba(0, 0, 0, .12);
+    @apply flex min-h-0 flex-1 flex-col overflow-hidden rounded-none;
+    /* Keep the cart edge-to-edge without duplicating the left panel frame. */
+    background: transparent;
+    border: none;
+    box-shadow: none;
+  }
+  .pos-cart__footer {
+    @apply flex flex-none items-stretch border-t border-[#9fbad9] bg-transparent py-0;
+    gap: 0;
+    padding-left: 0;
+    padding-right: 0;
+    box-shadow: none;
+  }
+  .pos-cart__footer-panel {
+    @apply flex flex-1 basis-0;
+  }
+  .pos-cart__footer-panel--left,
+  .pos-cart__footer-panel--middle,
+  .pos-cart__footer-panel--right {
+    @apply flex min-h-[118px] items-stretch;
+  }
+  .pos-cart__footer-panel--summary-divider {
+    position: relative;
+  }
+  .pos-cart__footer-panel--summary-divider::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 1px;
+    background: #9fbad9;
+  }
+  .pos-cart__footer-panel--middle::after {
+    content: "";
+    position: absolute;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    width: 1px;
+    background: #9fbad9;
+  }
+  .pos-cart__footer-panel--amount {
+    position: relative;
+    padding-left: 0;
   }
 
-  .transaction-table { @apply flex min-h-0 flex-1 flex-col; }
+  .pos-cart__summary-card {
+    @apply flex w-full rounded-none border-0 bg-transparent px-0 py-0 shadow-none;
+  }
+
+  .pos-cart__summary-card--customer {
+    @apply flex items-center gap-3;
+    min-height: 96px;
+    padding-left: 22px;
+    padding-right: 14px;
+    background: transparent;
+    box-shadow: none;
+  }
+  .pos-cart__customer-avatar {
+    @apply flex h-9 w-9 flex-none items-center justify-center rounded-full text-[13px] font-bold text-white;
+    background: linear-gradient(180deg, #3b82f6, #1d4ed8);
+    border: 1px solid #1e40af;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .5), inset 0 -3px 6px rgba(0, 0, 0, .18);
+  }
+  .pos-cart__customer-copy {
+    @apply min-w-0 flex-1;
+  }
+  .pos-cart__customer-name {
+    @apply flex items-center gap-1.5 text-[13.5px] font-bold text-[#132436];
+    line-height: 1.2;
+  }
+  .pos-cart__customer-meta {
+    @apply mt-1 text-[11px] leading-snug text-[#6b84a0];
+  }
+
+  .pos-cart__summary-card--subtotal {
+    @apply flex-col justify-center gap-1.5;
+    min-height: 96px;
+    padding-top: 0;
+    padding-bottom: 0;
+    padding-left: 14px;
+    padding-right: 14px;
+  }
+  .pos-cart__summary-row {
+    @apply flex items-center justify-between gap-3 text-[10px] font-black uppercase tracking-[0.12em] text-[#173a73];
+  }
+  .pos-cart__summary-row-label {
+    @apply text-[#173a73];
+  }
+  .pos-cart__summary-row-value {
+    @apply text-[12px] font-extrabold normal-case tracking-normal text-[#1b2d41];
+  }
+  .pos-cart__summary-row--discount {
+    @apply text-[#d6514f];
+  }
+  .pos-cart__summary-row--discount .pos-cart__summary-row-label,
+  .pos-cart__summary-row--discount .pos-cart__summary-row-value {
+    @apply text-[#d6514f];
+  }
+
+  .pos-cart__summary-card--total {
+    @apply flex-col justify-center gap-2.5;
+    min-height: 96px;
+    background: transparent;
+    border: none;
+    box-shadow: none;
+    text-align: right;
+    border-radius: 0;
+    padding: 10px 16px 8px;
+  }
+  .pos-cart__summary-total-head {
+    @apply flex items-center justify-end gap-[4px];
+    margin-bottom: 2px;
+    background: transparent;
+    border: none;
+    box-shadow: none;
+    padding: 0;
+  }
+  .pos-cart__summary-total-icon {
+    @apply flex items-center justify-center text-[0.95rem] font-black leading-none text-[#1d4ed8];
+    line-height: 1;
+    transform: translateY(-0.5px);
+  }
+  .pos-cart__summary-total-label {
+    @apply inline-flex items-center text-[10px] font-extrabold uppercase tracking-[0.18em] text-[#1d4ed8];
+    letter-spacing: 0.18em;
+  }
+  .pos-cart__summary-total-value {
+    @apply text-[2.7rem] font-black leading-none tracking-[-0.05em] text-[#0f172a];
+    text-align: right;
+    margin-left: 6px;
+    text-shadow: 0 1px 0 rgba(255, 255, 255, 0.8);
+  }
+  .pos-bottom-actions {
+    @apply grid flex-none grid-cols-5 gap-[9px];
+  }
+  .pos-bottom-action {
+    height: 48px;
+    min-height: 48px;
+  }
+
+  .transaction-table {
+    @apply flex min-h-0 flex-1 flex-col;
+    background: transparent;
+  }
+  .transaction-table--empty {
+    background: transparent;
+  }
 
   /* Fixed header strip — sits above the scroll area so the scrollbar never
      runs across the header. */
   .transaction-table__head {
     @apply flex-none;
-    background: #edf2f9;
-    border-bottom: 1px solid #cdddf0;
+    background: linear-gradient(180deg, rgba(147, 197, 253, 0.42), rgba(59, 130, 246, 0.25));
+    border-top: none;
+    border-bottom: 1px solid #9fbad9;
+    box-shadow: none;
   }
   .transaction-table__head table { @apply w-full border-collapse; }
 
@@ -275,7 +719,15 @@
   }
 
   .transaction-table thead th {
-    @apply whitespace-nowrap bg-[#edf2f9] px-[14px] py-[11px] text-left text-[10.5px] font-bold uppercase tracking-[0.5px] text-[#6b84a0];
+    @apply whitespace-nowrap bg-transparent px-[14px] py-[11px] text-left text-[11.5px] font-black uppercase text-[#173a73];
+    border-right: none;
+    border-bottom: 1px solid #9fbad9;
+    letter-spacing: 0.16em;
+    text-shadow: 0 1px 0 rgba(255, 255, 255, 0.5);
+    opacity: 1;
+  }
+  .transaction-table thead th:last-child {
+    border-right: none;
   }
 
   /* Shared column widths — used by BOTH the header table and the body table.
@@ -284,32 +736,33 @@
   thead th.col-item,     tbody td.tx-row__item      { width: auto; }
   thead th.col-qty,      tbody td.tx-row__qty-cell  { width: 90px; }
   thead th.col-price,    tbody td.tx-row__price     { width: 110px; }
-  thead th.col-disc-pct, tbody td.tx-row__disc-pct  { width: 95px; }
-  thead th.col-disc-amt, tbody td.tx-row__disc-amt  { width: 120px; }
   thead th.col-total,    tbody td.tx-row__total     { width: 130px; }
 
   /* Each header mirrors the alignment of the data beneath it. */
   thead th.col-item     { text-align: left; }
   thead th.col-qty      { text-align: center; }
   thead th.col-price    { text-align: right; }
-  thead th.col-disc-pct { text-align: center; }
-  thead th.col-disc-amt { text-align: right; }
   thead th.col-total    { text-align: right; }
 
   .tx-row { @apply cursor-pointer; }
   .tx-row td {
-    @apply whitespace-nowrap px-[14px] py-[11px] align-middle text-[13px];
+    @apply whitespace-nowrap px-[14px] py-[11px] align-middle text-[14px];
+    border-bottom: 1px solid #cdddf0;
+    background: transparent;
+    background-clip: padding-box;
+  }
+  .tx-row td:last-child {
+    border-right: none;
+  }
+  .tx-row:last-child td {
     border-bottom: 1px solid #cdddf0;
   }
-  .tx-row:last-child td { border-bottom: none; }
-  .tx-row:hover td { background: rgba(19, 36, 54, 0.035); }
+  .tx-row:hover td { background: transparent; }
 
-  /* Selected row: a clearly-visible blue highlight (deeper than the light
-     page background) across the whole row, plus a solid left accent bar only
-     under the Item column data. background-clip keeps the tint inside the
-     cell padding so the divider lines stay crisp and aligned. */
+  /* Selected row: keep the highlight clean and white while retaining the
+     left accent bar for the active item. */
   .tx-row.is-selected td {
-    background: rgba(59, 130, 246, 0.28);
+    background: #ffffff;
     background-clip: padding-box;
   }
   .tx-row.is-selected td.tx-row__item {
@@ -344,10 +797,6 @@
   .tx-row__price,
   .tx-row__total { @apply text-right tabular-nums; }
   .tx-row__total { @apply font-bold; }
-  .tx-row__disc-pct { @apply text-center text-[#132436]; }
-  .tx-row__disc-amt { @apply text-right text-[12.5px] font-semibold tabular-nums text-[#b5504a]; }
-
-  .disc-badge { @apply inline-block text-xs font-bold text-[#132436]; }
   .disc-badge--none { @apply text-[#6b84a0]; }
 
   /* Empty-cart state — fills the scroll area and centers the message. */
@@ -370,15 +819,17 @@
     /* overflow-hidden (NOT auto): the panel must never show a scrollbar. When
        the window is short, the Quick Actions grid + Transaction Summary below
        flex-shrink so the whole column always fits. */
-    @apply flex min-h-0 w-[400px] flex-col gap-3 overflow-hidden px-4 py-[16px];
+    @apply flex min-h-0 w-[420px] flex-col gap-3 overflow-hidden px-4 pt-[4px] pb-[16px];
     border-left: 1px solid #9fbad9;
     background: transparent;
+    box-shadow: none;
   }
   /* In Ready Mode the right panel is fully disabled — hidden entirely so the
      New Transaction button is the only action surface. */
   .pos-sidebar--standby { @apply hidden; }
 
   .sidebar-block { @apply flex min-h-0 flex-none flex-col; }
+  .sidebar-block--scanner { @apply pt-3; }
 
   /* Quick Actions is the first block to give up space when the window is
      short: it can shrink (flex-shrink:1 overrides the flex-none base) and its
@@ -509,44 +960,46 @@
   /* Quick actions grid */
   .quick-actions {
     @apply grid min-h-0 flex-1 grid-cols-2 gap-[9px];
-    /* Three rows of two tiles; rows compress (min 48px) when vertical space is
-       tight so the panel never overflows. */
-    grid-auto-rows: minmax(48px, 1fr);
+    grid-auto-rows: minmax(60px, 1fr);
   }
-  /* Tiles deliberately match the Paybar's secondary buttons (Pause / Hold /
-     Cancel): same 12.5px font, padding, light-gray gradient, border + inset
-     shadow and hover treatment. */
   .quick-action {
-    @apply relative flex min-w-0 cursor-pointer items-center justify-center gap-1.5 rounded-xl p-[14px] text-center text-[12.5px] font-extrabold text-[#132436];
+    @apply relative flex min-w-0 cursor-pointer flex-col items-center justify-center gap-[6px] rounded-xl px-[8px] py-[10px] text-center text-[12px] font-extrabold text-[#132436];
     min-height: 0;
-    background: linear-gradient(180deg, #ffffff, #dde3ea);
-    border: 1px solid #b7c3d1;
-    box-shadow: inset 0 2px 5px rgba(0, 0, 0, .08);
+    background: linear-gradient(180deg, #f5f8fb, #e4ebf3);
+    border: 1px solid #bfd0e6;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .7), inset 0 -3px 6px rgba(20, 42, 70, .04);
+    transition: transform 0.12s ease, border-color 0.12s ease, box-shadow 0.12s ease;
   }
-  .quick-action:hover { border-color: #2f7fd8; filter: brightness(0.98); }
+  .quick-action:hover {
+    border-color: #2f7fd8;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .7), 0 2px 6px rgba(47, 127, 216, .08);
+    filter: brightness(0.99);
+  }
   .quick-action.is-pressed { animation: btnFlash 0.26s ease; }
 
-  /* Key cap — identical to the paybar button key cap. */
   .quick-action__key {
-    @apply absolute right-[9px] top-[7px] inline-block rounded px-[5px] py-px text-[9px] font-extrabold leading-[1.35] text-[#6b84a0];
+    @apply absolute right-[7px] top-[6px] inline-block rounded px-[5px] py-px text-[9px] font-extrabold leading-[1.3] text-[#6b84a0];
     background: linear-gradient(180deg, #ffffff, #eaf1fb);
     border: 1px solid #cdddf0;
     box-shadow: inset 0 2px 5px rgba(0, 0, 0, .08);
   }
 
   .quick-action__icon {
-    /* Inline icon, same visual weight as the glyphs on the paybar buttons. */
-    @apply flex h-4 w-4 flex-none items-center justify-center text-[#132436];
+    @apply flex h-[20px] w-[20px] flex-none items-center justify-center text-[#132436];
+    line-height: 1;
   }
   .quick-action__icon svg {
-    @apply h-4 w-4;
+    @apply h-[20px] w-[20px];
     fill: none;
     stroke: currentColor;
     stroke-width: 1.8;
     stroke-linecap: round;
     stroke-linejoin: round;
   }
-  .quick-action__name { @apply block min-w-0 truncate; }
+  .quick-action__name {
+    @apply block min-w-0 text-[11.5px] font-extrabold leading-[1.1];
+    letter-spacing: 0.01em;
+  }
   /* Transaction summary — card fills its block and pins the total to the
      bottom so the panel's height is always fully used. */
   .side-summary {
@@ -571,32 +1024,90 @@
   .side-summary__total span:last-child { @apply tabular-nums; }
 
   /* Cancel / Pay / Pause / Hold / Recall */
+  .pos-session-actions {
+    @apply mt-0 flex gap-2.5;
+  }
+  .pos-session-actions .pos-btn--session {
+    @apply basis-0 flex-1;
+  }
   .pos-paybar { @apply mt-auto flex flex-col gap-2.5; }
+  .pos-paybar__label {
+    @apply mb-1 text-[10px] font-extrabold uppercase tracking-[0.14em] text-[#6b84a0];
+    letter-spacing: 0.12em;
+    opacity: 1;
+    text-shadow: none;
+  }
   .pos-paybar__row { @apply flex gap-2.5; }
   .pos-paybar__row .pos-btn { @apply basis-0 flex-1; }
   .pos-btn {
-    @apply relative cursor-pointer rounded-xl border p-[14px] text-[12.5px] font-bold;
-    border-color: #cdddf0;
-    background: linear-gradient(180deg, #ffffff, #eaf1fb);
-    box-shadow: inset 0 2px 5px rgba(0, 0, 0, .08);
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    min-height: 58px;
+    padding: 8px 8px 9px;
+    border-radius: 12px;
+    border: 1px solid #bfd0e6;
+    background: linear-gradient(180deg, #f5f8fb, #e4ebf3);
+    box-shadow: inset 0 2px 0 rgba(255, 255, 255, 1), inset 0 0 0 1px rgba(255,255,255,0.45), 0 1px 0 rgba(255,255,255,0.6);
+    border-bottom: 1px solid rgba(140, 164, 190, 0.75);
+    color: #132436;
+    font-size: 12px;
+    font-weight: 800;
+    line-height: 1.1;
+    letter-spacing: 0.01em;
+    text-align: center;
+    cursor: pointer;
   }
   .pos-btn--cancel,
   .pos-btn--hold,
   .pos-btn--pause,
-  .pos-btn--recall {
-    @apply font-extrabold text-[#132436];
-    border: 1px solid #b7c3d1;
-    background: linear-gradient(180deg, #ffffff, #dde3ea);
-    box-shadow: inset 0 2px 5px rgba(0, 0, 0, .08);
+  .pos-btn--recall,
+  .pos-btn--search,
+  .pos-btn--customer,
+  .pos-btn--quantity,
+  .pos-btn--discount,
+  .pos-btn--remove,
+  .pos-btn--transfer,
+  .pos-btn--more,
+  .pos-btn--refund {
+    color: #132436;
+    border: 1px solid #bfd0e6;
+    background: linear-gradient(180deg, #f5f8fb, #e4ebf3);
+    box-shadow: inset 0 2px 0 rgba(255, 255, 255, 1), inset 0 0 0 1px rgba(255,255,255,0.45), 0 1px 0 rgba(255,255,255,0.6);
+    border-bottom: 1px solid rgba(140, 164, 190, 0.75);
   }
   .pos-btn--hold,
-  .pos-btn--pause {
-    @apply inline-flex items-center justify-center gap-1.5;
+  .pos-btn--pause,
+  .pos-btn--search,
+  .pos-btn--cancel,
+  .pos-btn--customer,
+  .pos-btn--quantity,
+  .pos-btn--discount,
+  .pos-btn--remove,
+  .pos-btn--transfer,
+  .pos-btn--more,
+  .pos-btn--refund {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
   }
   .pos-btn--cancel:hover,
   .pos-btn--hold:hover,
   .pos-btn--pause:hover,
-  .pos-btn--recall:hover {
+  .pos-btn--recall:hover,
+  .pos-btn--search:hover,
+  .pos-btn--customer:hover,
+  .pos-btn--discount:hover,
+  .pos-btn--remove:hover,
+  .pos-btn--transfer:hover,
+  .pos-btn--quantity:hover,
+  .pos-btn--more:hover,
+  .pos-btn--refund:hover {
     border-color: #2f7fd8;
     filter: brightness(0.98);
   }
@@ -607,13 +1118,46 @@
     box-shadow: inset 0 1px 0 rgba(255, 255, 255, .5), inset 0 -3px 6px rgba(0, 0, 0, .18), 0 3px 6px rgba(0, 0, 0, .22);
   }
   .pos-btn--pay:hover { filter: brightness(1.06); }
+  .pos-btn--session {
+    @apply w-full flex-row items-center justify-center gap-3 px-4 text-[13px] font-extrabold text-white;
+    min-height: 54px;
+    height: 54px;
+    padding-top: 12px;
+    padding-bottom: 12px;
+    border: 1px solid #1e40af;
+    border-radius: 12px;
+    background: linear-gradient(180deg, #3b82f6, #1d4ed8);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .5), inset 0 -3px 6px rgba(0, 0, 0, .18), 0 3px 6px rgba(0, 0, 0, .22);
+  }
+  .pos-btn--session .pos-btn__icon {
+    width: 28px;
+    height: 28px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.16);
+    border-color: rgba(255, 255, 255, 0.34);
+    color: white;
+  }
+  .pos-btn--session:hover { filter: brightness(1.04); }
   .pos-btn.is-pressed { animation: btnFlash 0.26s ease; }
 
   .pos-btn__icon {
-    @apply inline-flex h-4 w-4 items-center justify-center align-middle;
+    position: static;
+    display: inline-flex;
+    width: 34px;
+    height: 34px;
+    align-items: center;
+    justify-content: center;
+    transform: none;
+    line-height: 1;
+    border-radius: 999px;
+    background: linear-gradient(180deg, #f8fbff 0%, #e6efff 42%, #d7e4ff 100%);
+    border: 1px solid rgba(100, 128, 204, 0.55);
+    color: #2348a8;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.95), inset 0 -8px 12px rgba(129, 154, 214, 0.12), 0 4px 10px rgba(123, 138, 180, 0.18);
   }
   .pos-btn__icon svg {
-    @apply h-4 w-4;
+    width: 20px;
+    height: 20px;
     fill: none;
     stroke: currentColor;
     stroke-width: 1.8;
@@ -621,8 +1165,35 @@
     stroke-linejoin: round;
   }
 
+  .pos-btn--search .pos-btn__icon,
+  .pos-btn--quantity .pos-btn__icon,
+  .pos-btn--customer .pos-btn__icon,
+  .pos-btn--discount .pos-btn__icon,
+  .pos-btn--remove .pos-btn__icon,
+  .pos-btn--transfer .pos-btn__icon,
+  .pos-btn--hold .pos-btn__icon,
+  .pos-btn--recall .pos-btn__icon,
+  .pos-btn--pause .pos-btn__icon,
+  .pos-btn--cancel .pos-btn__icon,
+  .pos-btn--more .pos-btn__icon,
+  .pos-btn--refund .pos-btn__icon {
+    background: linear-gradient(180deg, #f8fbff 0%, #e6efff 42%, #d7e4ff 100%);
+    border-color: rgba(100, 128, 204, 0.55);
+    color: #2348a8;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.95), inset 0 -8px 12px rgba(129, 154, 214, 0.12), 0 4px 10px rgba(123, 138, 180, 0.18);
+  }
+
   .pos-btn__key {
-    @apply absolute right-[9px] top-[7px] inline-block rounded px-[5px] py-px text-[9px] font-extrabold leading-[1.35] text-[#6b84a0];
+    position: absolute;
+    right: 7px;
+    top: 6px;
+    display: inline-block;
+    border-radius: 5px;
+    padding: 1px 5px;
+    font-size: 10px;
+    font-weight: 800;
+    line-height: 1.3;
+    color: #6b84a0;
     background: linear-gradient(180deg, #ffffff, #eaf1fb);
     border: 1px solid #cdddf0;
     box-shadow: inset 0 2px 5px rgba(0, 0, 0, .08);
@@ -648,6 +1219,12 @@
     @apply flex flex-none items-center justify-between px-[26px] py-3 text-[12px] font-semibold text-[#334155];
     border-top: 1px solid #9fbad9;
     background: transparent;
+  }
+  .pos-footer__left {
+    @apply flex min-w-0 items-center gap-2;
+  }
+  .pos-footer__separator {
+    @apply text-[#7c91aa];
   }
 
   /* ============================ Toast =================================== */
@@ -1559,6 +2136,27 @@
 .cash-movement {
   max-width: 520px;
 }
+.refund-auth__banner {
+  @apply flex items-center gap-3 rounded-xl px-3.5 py-3;
+  background: linear-gradient(135deg, #eef6ff, #e2edfb);
+  border: 1px solid #a9c6e8;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .8), 0 3px 8px rgba(47, 127, 216, .1);
+}
+.refund-auth__icon {
+  @apply flex h-9 w-9 flex-none items-center justify-center rounded-lg text-[#2f7fd8];
+  background: #ffffff;
+  border: 1px solid #9fc0e7;
+}
+.refund-auth__icon svg {
+  @apply h-5 w-5;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+}
+.refund-auth__banner strong { @apply block text-[13px] font-extrabold text-[#173b72]; }
+.refund-auth__banner small { @apply mt-0.5 block text-[11.5px] font-semibold text-[#4a617c]; }
 .cash-movement__manager-note {
   @apply rounded-lg border border-[#e8934a] bg-[#fef3e2] px-3 py-2 font-bold text-[#9c541f];
 }
@@ -1670,9 +2268,6 @@
 .close-register__result-grid strong { @apply text-[13px] font-extrabold text-[#132436]; }
 
 /* ==================== POS footer session bar ============================= */
-.pos-footer__open { color: #15803d; font-weight: 700; }
-.pos-footer__offline { color: #b45309; font-weight: 800; }
-.pos-footer__online { color: #15803d; font-weight: 800; }
 .pos-footer--gate { margin-top: auto; }
 @media print {
 }
@@ -1724,9 +2319,14 @@
   }
   .standby__recall {
     @apply inline-flex items-center justify-center gap-2;
+    min-width: 300px;
     background: linear-gradient(180deg, #ffffff, #eaf1fb);
     color: #2f7fd8;
     border: 1px solid #9fbad9;
+  }
+  .standby__recall .standby__key {
+    background: linear-gradient(180deg, #3b82f6, #1d4ed8);
+    border-color: #1e40af;
   }
   .standby__icon {
     @apply inline-flex h-5 w-5 items-center justify-center;
@@ -1745,3 +2345,10 @@
     color: #1d4ed8;
     border: 1px solid #93c5fd;
   }
+  .pos-btn--transfer {
+    @apply w-full font-extrabold text-[#132436];
+    border: 1px solid #bfd0e6;
+    background: linear-gradient(180deg, #f5f8fb, #e4ebf3);
+    box-shadow: inset 0 2px 0 rgba(255, 255, 255, 1), inset 0 -5px 8px rgba(20, 42, 70, .08), inset 0 0 0 1px rgba(255,255,255,0.45), 0 1px 0 rgba(255,255,255,0.6);
+  }
+  .pos-btn--transfer:hover { border-color: #2f7fd8; filter: brightness(0.98); }

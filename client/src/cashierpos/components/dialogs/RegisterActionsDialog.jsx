@@ -6,6 +6,7 @@ import Dialog from "./Dialog.jsx";
 const ACTIONS = [
   { id: "cashIn", label: "Cash In", eyebrow: "Drawer movement", description: "Add physical cash to the drawer.", icon: "cash", tone: "positive" },
   { id: "cashOut", label: "Cash Out", eyebrow: "Drawer movement", description: "Remove physical cash from the drawer.", icon: "cash", tone: "negative" },
+  { id: "cashDrop", label: "Cash Drop / Safe Drop", eyebrow: "Manager only", description: "Move cash from the drawer to the safe.", icon: "cash", tone: "negative" },
   { id: "closeRegister", label: "Close Register", eyebrow: "End of shift", description: "Count the drawer and close this session.", icon: "clock", tone: "closing" },
 ];
 

@@ -28,6 +28,11 @@ const ICONS = {
   cancel: '<circle cx="12" cy="12" r="9"/><path d="M15 9l-6 6M9 9l6 6"/>',
   clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
   receipt: '<path d="M6 3h12v18l-2-1.5L14 21l-2-1.5L10 21l-2-1.5L6 21z"/><path d="M9 8h6M9 12h6M9 16h4"/>',
+  transfer: '<path d="M4 7h13l-3-3M20 17H7l3 3"/>',
+  return: '<path d="M7 7h9a4 4 0 1 1 0 8H7"/><path d="M10 4L7 7l3 3"/><path d="M17 17v-2"/>',
+  logout: '<path d="M9 7V5a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-6a2 2 0 0 1-2-2v-2"/><path d="M12 12h8"/><path d="M16 8l4 4-4 4"/>',
+  register: '<rect x="4" y="6" width="16" height="14" rx="2"/><path d="M8 10h8M8 14h6M10 18h4"/><path d="M10 2v4M14 2v4"/>',
+  cart: '<path d="M3.5 4.5h2l2.3 9.4a1 1 0 0 0 1 .8h8.7a1 1 0 0 0 .97-.75L18.8 6H6.1"/><circle cx="10" cy="17.5" r="1.3"/><circle cx="17" cy="17.5" r="1.3"/><path d="M8 4.5l1.4-2h5.2l1.4 2"/>',
   pwd: '<circle cx="12" cy="6.5" r="2.5"/><path d="M12 9v5.5M12 14.5l-2.8 4M12 14.5l2.8 2.6M8.2 11h7.6"/><circle cx="7.5" cy="19" r="1.4"/><circle cx="16.5" cy="18" r="1.6"/>'
 };
 

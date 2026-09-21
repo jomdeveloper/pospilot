@@ -195,6 +195,45 @@ test('pending sales can be created and recalled across a cashier session', async
   assert.equal(cancelled.data.pendingSale.status, 'cancelled');
 });
 
+test('transferred pending sales are visible at the destination and can only be claimed once', async () => {
+  const source = await req('POST', '/cashier-sessions', {
+    terminal: 'POS-TRANSFER-SOURCE',
+    openingFloat: 1000,
+  }, adminToken);
+  const destination = await req('POST', '/cashier-sessions', {
+    terminal: 'POS-TRANSFER-TARGET',
+    openingFloat: 1000,
+  }, adminToken);
+  assert.equal(source.status, 201);
+  assert.equal(destination.status, 201);
+
+  const created = await req('POST', '/pending-sales', {
+    cashierSessionId: source.data.session.id,
+    destinationTerminal: 'POS-TRANSFER-TARGET',
+    customerName: 'Transferred Customer',
+    payload: { cart: [{ id: 1, qty: 2, price: 25, discountPct: 10 }], total: 45 },
+  }, adminToken);
+  assert.equal(created.status, 201);
+  assert.equal(created.data.pendingSale.destinationTerminal, 'POS-TRANSFER-TARGET');
+
+  const incoming = await req('GET', '/pending-sales?terminal=POS-TRANSFER-TARGET', null, adminToken);
+  assert.equal(incoming.status, 200);
+  assert.ok(incoming.data.pendingSales.some((sale) => sale.id === created.data.pendingSale.id));
+
+  const claimed = await req('PATCH', `/pending-sales/${created.data.pendingSale.id}/claim`, {
+    terminal: 'POS-TRANSFER-TARGET',
+    cashierSessionId: destination.data.session.id,
+  }, adminToken);
+  assert.equal(claimed.status, 200);
+  assert.equal(claimed.data.pendingSale.status, 'in_progress');
+
+  const secondClaim = await req('PATCH', `/pending-sales/${created.data.pendingSale.id}/claim`, {
+    terminal: 'POS-TRANSFER-TARGET',
+    cashierSessionId: destination.data.session.id,
+  }, adminToken);
+  assert.equal(secondClaim.status, 409);
+});
+
 test('security headers are present on API responses', async () => {
   const res = await fetch(`${baseUrl}/api/health`);
   assert.equal(res.headers.get('x-content-type-options'), 'nosniff');

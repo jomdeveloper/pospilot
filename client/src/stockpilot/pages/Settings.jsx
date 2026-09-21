@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from "react";
-import { Archive, Building2, Check, Download, FileText, FolderOpen, Globe, HardDrive, KeyRound, LogOut, MonitorCheck, RefreshCw, RotateCcw, Settings as SettingsIcon, ShieldCheck, Timer, Trash2, Upload } from "lucide-react";
+import React, { useEffect, useRef, useState } from "react";
+import { Archive, Building2, Check, Download, FileText, FolderOpen, Globe, HardDrive, KeyRound, LogOut, MonitorCheck, RefreshCw, RotateCcw, Settings as SettingsIcon, ShieldCheck, Timer, Trash2, Upload, Wifi } from "lucide-react";
 import Card from "../components/ui/Card";
 import Button from "../components/ui/Button";
 import { DEFAULT_SETTINGS, readStoreSettings, saveStoreSettings, STORE_DEFAULT_LOGO } from "../settings";
@@ -18,6 +18,8 @@ export default function SettingsPage({ t, sessionToken }) {
   const [backupDirTest, setBackupDirTest] = useState(null);
   const [backupDirBusy, setBackupDirBusy] = useState(false);
   const [launchStartupState, setLaunchStartupState] = useState(false);
+  const [restartRequired, setRestartRequired] = useState(false);
+  const lanAccessBeforeSave = useRef(readStoreSettings().lanAccessEnabled);
   const [revokeBusy, setRevokeBusy] = useState(false);
   const update = (key, value) => setForm((current) => ({ ...current, [key]: value }));
 
@@ -27,7 +29,13 @@ export default function SettingsPage({ t, sessionToken }) {
     if (!sessionToken) return;
     let active = true;
     api.getSettings(sessionToken)
-      .then((db) => { if (active) setForm({ ...DEFAULT_SETTINGS, ...(db || {}) }); })
+      .then((db) => {
+        if (active) {
+          const settings = { ...DEFAULT_SETTINGS, ...(db || {}) };
+          setForm(settings);
+          lanAccessBeforeSave.current = settings.lanAccessEnabled;
+        }
+      })
       .catch(() => { /* keep local cache */ });
     return () => { active = false; };
   }, [sessionToken]);
@@ -268,6 +276,11 @@ export default function SettingsPage({ t, sessionToken }) {
     event.preventDefault();
     setSaving(true);
     const ok = await persist(form);
+    const lanAccessChanged = String(form.lanAccessEnabled) !== String(lanAccessBeforeSave.current);
+    if (ok && lanAccessChanged && typeof window.desktop?.relaunch === "function") {
+      setRestartRequired(true);
+      lanAccessBeforeSave.current = form.lanAccessEnabled;
+    }
     // Keep the OS start-up entry in sync with what was saved (desktop only).
     if (typeof window.desktop?.setLaunchOnStartup === "function") {
       try {
@@ -283,6 +296,10 @@ export default function SettingsPage({ t, sessionToken }) {
     setSaving(true);
     await persist(DEFAULT_SETTINGS);
     setForm({ ...DEFAULT_SETTINGS });
+    if (String(lanAccessBeforeSave.current) !== String(DEFAULT_SETTINGS.lanAccessEnabled) && typeof window.desktop?.relaunch === "function") {
+      setRestartRequired(true);
+    }
+    lanAccessBeforeSave.current = DEFAULT_SETTINGS.lanAccessEnabled;
     setSaving(false);
     notify("Settings restored to defaults.");
   };
@@ -497,6 +514,36 @@ return (
 
         {section("Security & Desktop", ShieldCheck,
           <div className="sm:col-span-2 space-y-4">
+            <div className="flex items-center justify-between gap-3 rounded-xl p-3" style={{ background: t.bg, border: `1px solid ${t.border}` }}>
+              <div className="flex items-start gap-3">
+                <Wifi size={18} style={{ color: t.primary }} className="mt-0.5" />
+                <div>
+                  <p className="text-sm font-semibold" style={{ color: t.text }}>Phone / LAN access</p>
+                  <p className="text-[11px] mt-0.5 leading-relaxed" style={{ color: t.sub }}>
+                    Allow phones and remote barcode scanners on the same network to connect to this register.
+                    {typeof window.desktop?.relaunch !== "function" && " Available in the packaged desktop app."}
+                  </p>
+                </div>
+              </div>
+              <label className="relative inline-flex items-center cursor-pointer shrink-0">
+                <input
+                  type="checkbox"
+                  className="sr-only peer"
+                  checked={form.lanAccessEnabled === "true"}
+                  onChange={(event) => update("lanAccessEnabled", String(event.target.checked))}
+                  disabled={typeof window.desktop?.relaunch !== "function"}
+                />
+                <span className="w-11 h-6 bg-slate-300 peer-checked:bg-blue-600 rounded-full transition-colors peer-disabled:opacity-40 peer-disabled:cursor-not-allowed after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-transform peer-checked:after:translate-x-5" />
+              </label>
+            </div>
+            {restartRequired && (
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl px-3 py-2.5 text-xs" style={{ background: t.primarySoft, color: t.text }}>
+                <span>Restart PosPilot to apply the LAN access change.</span>
+                <Button t={t} type="button" onClick={() => window.desktop.relaunch()}>
+                  <RefreshCw size={14} /> Restart now
+                </Button>
+              </div>
+            )}
             <div className="flex items-center justify-between gap-3 rounded-xl p-3" style={{ background: t.bg, border: `1px solid ${t.border}` }}>
               <div className="flex items-start gap-3">
                 <MonitorCheck size={18} style={{ color: t.primary }} className="mt-0.5" />

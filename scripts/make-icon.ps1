@@ -1,65 +1,50 @@
-# Generates build/icon.ico — a 256x256 placeholder PosPilot icon.
-# Create a real brand icon (256x256 .ico) in build/ and delete this script.
+# Generates build/icon.ico from the branded PNG source.
 Add-Type -AssemblyName System.Drawing
 
 $buildDir = Join-Path $PSScriptRoot '..\build'
 if (-not (Test-Path $buildDir)) { New-Item -ItemType Directory -Path $buildDir | Out-Null }
+
+$inputPng = Join-Path $buildDir 'pospilot-logo.png'
 $outIco = Join-Path $buildDir 'icon.ico'
 
-$size = 256
-$bmp = New-Object System.Drawing.Bitmap($size, $size)
-$g = [System.Drawing.Graphics]::FromImage($bmp)
-$g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
+if (-not (Test-Path $inputPng)) {
+    throw "Missing source image: $inputPng"
+}
+
+$img = [System.Drawing.Image]::FromFile($inputPng)
+$width = 256
+$height = 256
+
+# Resize/crop to a square icon canvas for best compatibility.
+$canvas = New-Object System.Drawing.Bitmap($width, $height)
+$g = [System.Drawing.Graphics]::FromImage($canvas)
 $g.Clear([System.Drawing.Color]::Transparent)
+$g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
+$g.CompositingQuality = [System.Drawing.Drawing2D.CompositingQuality]::HighQuality
+$g.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
 
-# Rounded-square background
-$d = 64
-$path = New-Object System.Drawing.Drawing2D.GraphicsPath
-$path.AddArc(0, 0, $d, $d, 180, 90)
-$path.AddArc($size - $d, 0, $d, $d, 270, 90)
-$path.AddArc($size - $d, $size - $d, $d, $d, 0, 90)
-$path.AddArc(0, $size - $d, $d, $d, 90, 90)
-$path.CloseFigure()
+$sourceRect = [System.Drawing.Rectangle]::FromLTRB(0, 0, $img.Width, $img.Height)
+$destRect = [System.Drawing.Rectangle]::FromLTRB(0, 0, $width, $height)
+$g.DrawImage($img, $destRect, $sourceRect, [System.Drawing.GraphicsUnit]::Pixel)
 
-$rect = New-Object System.Drawing.Rectangle(0, 0, $size, $size)
-$brush = New-Object System.Drawing.Drawing2D.LinearGradientBrush(
-    $rect,
-    [System.Drawing.Color]::FromArgb(255, 18, 157, 88),   # top green
-    [System.Drawing.Color]::FromArgb(255, 8, 92, 60),     # bottom green
-    45
-)
-$g.FillPath($brush, $path)
-
-# Bold "P" centered
-$font = New-Object System.Drawing.Font('Segoe UI', 150, [System.Drawing.FontStyle]::Bold, [System.Drawing.GraphicsUnit]::Pixel)
-$sf = New-Object System.Drawing.StringFormat
-$sf.Alignment = [System.Drawing.StringAlignment]::Center
-$sf.LineAlignment = [System.Drawing.StringAlignment]::Center
-$white = [System.Drawing.Brushes]::White
-$g.DrawString('P', $font, $white, $rect, $sf)
-
-# Save PNG bytes into a MemoryStream
 $ms = New-Object System.IO.MemoryStream
-$bmp.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png)
+$canvas.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png)
 $png = $ms.ToArray()
-$g.Dispose(); $bmp.Dispose(); $ms.Dispose()
+$g.Dispose(); $canvas.Dispose(); $img.Dispose(); $ms.Dispose()
 
-# Wrap the PNG inside an ICO container (PNG-compressed icon, 256x256)
 $fs = [System.IO.File]::Create($outIco)
 $bw = New-Object System.IO.BinaryWriter($fs)
-# ICONDIR
-$bw.Write([uint16]0)                       # reserved
-$bw.Write([uint16]1)                       # type = icon
-$bw.Write([uint16]1)                       # count = 1
-# ICONDIRENTRY
-$bw.Write([byte]0)                         # width  (0 => 256)
-$bw.Write([byte]0)                         # height (0 => 256)
-$bw.Write([byte]0)                         # color count
-$bw.Write([byte]0)                         # reserved
-$bw.Write([uint16]1)                       # planes
-$bw.Write([uint16]32)                      # bits per pixel
-$bw.Write([uint32]$png.Length)             # bytes in image
-$bw.Write([uint32]22)                      # offset from start of file
+$bw.Write([uint16]0)
+$bw.Write([uint16]1)
+$bw.Write([uint16]1)
+$bw.Write([byte]0)
+$bw.Write([byte]0)
+$bw.Write([byte]0)
+$bw.Write([byte]0)
+$bw.Write([uint16]1)
+$bw.Write([uint16]32)
+$bw.Write([uint32]$png.Length)
+$bw.Write([uint32]22)
 $bw.Write($png)
 $bw.Close(); $fs.Close()
 

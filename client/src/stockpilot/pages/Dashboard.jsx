@@ -20,6 +20,7 @@ function productExpiry(product) {
 export default function Dashboard({ t }) {
   const [products, setProducts] = useState([]);
   const [sales, setSales] = useState([]);
+  const [recentSales, setRecentSales] = useState([]);
   const [customerCount, setCustomerCount] = useState(0);
   const [supplierCount, setSupplierCount] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -28,9 +29,21 @@ export default function Dashboard({ t }) {
   useEffect(() => {
     setLoading(true);
     setError("");
-    Promise.all([api.getProducts(), api.getSales(), api.getCustomers(), api.getSuppliers()]).then(([nextProducts, nextSales, customers, suppliers]) => {
+    const now = new Date();
+    const localKey = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+    const firstOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    Promise.all([
+      api.getProducts(),
+      // Full month-to-date window (server-side, local dates) so the day/month
+      // totals are NOT truncated to the most recent 100 sales.
+      api.getSales({ from: localKey(firstOfMonth), to: localKey(now) }),
+      api.getSales({ limit: 100 }),
+      api.getCustomers(),
+      api.getSuppliers(),
+    ]).then(([nextProducts, monthSales, recent, customers, suppliers]) => {
       setProducts(nextProducts);
-      setSales(nextSales);
+      setSales(monthSales);
+      setRecentSales(recent);
       setCustomerCount(customers.length);
       setSupplierCount(suppliers.length);
     }).catch((requestError) => setError(requestError.message || "Unable to load dashboard data")).finally(() => setLoading(false));
@@ -42,8 +55,10 @@ export default function Dashboard({ t }) {
     const expiry = productExpiry(product);
     return expiry && expiry <= new Date(Date.now() + 90 * 24 * 60 * 60 * 1000);
   });
-  const today = new Date().toDateString();
-  const salesToday = sales.filter((sale) => new Date(sale.created_at).toDateString() === today);
+  const todayDate = new Date();
+  const todayKey = `${todayDate.getFullYear()}-${String(todayDate.getMonth() + 1).padStart(2, "0")}-${String(todayDate.getDate()).padStart(2, "0")}`;
+  const datePart = (value) => String(value || "").match(/^(\d{4})-(\d{2})-(\d{2})/)?.[0] || "";
+  const salesToday = sales.filter((sale) => datePart(sale.created_at) === todayKey);
   const totalSalesToday = salesToday.filter((sale) => sale.status !== "VOIDED" && sale.status !== "CANCELLED").reduce((sum, sale) => sum + Number(sale.grand_total || 0) - Number(sale.refunded_total || 0), 0);
   const monthlySales = sales.filter((sale) => sale.status !== "VOIDED" && sale.status !== "CANCELLED").reduce((sum, sale) => sum + Number(sale.grand_total || 0) - Number(sale.refunded_total || 0), 0);
 
@@ -53,7 +68,7 @@ export default function Dashboard({ t }) {
     return [...totals.entries()].map(([name, value]) => ({ name, value }));
   }, [products]);
   const pieColors = [t.primary, t.success, t.warning, t.info, t.danger];
-  const salesTrend = sales.slice(0, 7).reverse().map((sale) => ({ day: new Date(sale.created_at).toLocaleDateString(undefined, { weekday: "short" }), sales: Number(sale.grand_total || 0) }));
+  const salesTrend = recentSales.slice(0, 7).reverse().map((sale) => ({ day: new Date(sale.created_at).toLocaleDateString(undefined, { weekday: "short" }), sales: Number(sale.grand_total || 0) }));
 
   return (
     <div className="space-y-5">
@@ -96,7 +111,7 @@ export default function Dashboard({ t }) {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <Card t={t} className="p-5 lg:col-span-2"><div className="flex items-center justify-between mb-3"><h3 className="font-bold text-sm" style={{ color: t.text }}>Recent Sales</h3></div><div className="space-y-1">{sales.slice(0, 5).map((sale) => <div key={sale.id} className="flex items-center justify-between py-2.5" style={{ borderBottom: `1px solid ${t.border}` }}><div className="min-w-0"><p className="text-sm font-semibold truncate" style={{ color: t.text }}>#{sale.id} · {sale.customer || "Walk-in Customer"}</p><p className="text-xs" style={{ color: t.sub }}>{sale.payment_type || "Unknown"} · {new Date(sale.created_at).toLocaleString()}</p></div><p className="text-sm font-bold shrink-0" style={{ color: t.text }}>{money(sale.grand_total)}</p></div>)}</div></Card>
+        <Card t={t} className="p-5 lg:col-span-2"><div className="flex items-center justify-between mb-3"><h3 className="font-bold text-sm" style={{ color: t.text }}>Recent Sales</h3></div><div className="space-y-1">{recentSales.slice(0, 5).map((sale) => <div key={sale.id} className="flex items-center justify-between py-2.5" style={{ borderBottom: `1px solid ${t.border}` }}><div className="min-w-0"><p className="text-sm font-semibold truncate" style={{ color: t.text }}>#{sale.id} · {sale.customer || "Walk-in Customer"}</p><p className="text-xs" style={{ color: t.sub }}>{sale.payment_type || "Unknown"} · {new Date(sale.created_at).toLocaleString()}</p></div><p className="text-sm font-bold shrink-0" style={{ color: t.text }}>{money(sale.grand_total)}</p></div>)}</div></Card>
         <Card t={t} className="p-5"><h3 className="font-bold text-sm mb-3" style={{ color: t.text }}>Low Stock List</h3><div className="space-y-3">{lowStock.slice(0, 5).map((product) => <div key={product.id}><div className="flex items-center justify-between mb-1"><p className="text-xs font-semibold truncate" style={{ color: t.text }}>{product.name}</p><span className="text-xs font-bold shrink-0 ml-2" style={{ color: t.warning }}>{product.stock}</span></div><StockBar t={t} pct={product.maximum_stock ? (product.stock / product.maximum_stock) * 100 : 0} /></div>)}</div></Card>
       </div>
     </div>

@@ -17,6 +17,7 @@ export default function TransactionActionsDialog({ initialMode = "void" }) {
   const [voidReason, setVoidReason] = useState(VOID_REASONS[0]);
   const [description, setDescription] = useState("");
   const [refundMethod, setRefundMethod] = useState("cash");
+  const [refundScope, setRefundScope] = useState("selected");
   const [confirmVoid, setConfirmVoid] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -36,6 +37,7 @@ export default function TransactionActionsDialog({ initialMode = "void" }) {
       setSelected(detail);
       setQuantities({});
       setReason("");
+      setRefundScope("selected");
       setConfirmVoid(false);
     } catch (requestError) {
       setError(requestError.message || "Unable to load transaction.");
@@ -67,9 +69,21 @@ export default function TransactionActionsDialog({ initialMode = "void" }) {
 
   const refundSale = async () => {
     if (!selected || busy) return;
+    const invalidItem = selected.items.find((item) => {
+      const requested = Number(quantities[item.id]);
+      return refundScope === "selected" && requested > Number(item.returnable_qty);
+    });
+    if (invalidItem) {
+      setError(`${invalidItem.name} has only ${invalidItem.returnable_qty} unit(s) available to refund.`);
+      return;
+    }
     const items = selected.items
-      .filter((item) => Number(quantities[item.id]) > 0)
-      .map((item) => ({ itemId: item.id, quantity: Number(quantities[item.id]) }));
+      .filter((item) => Number(item.returnable_qty) > 0)
+      .filter((item) => refundScope === "all" || Number(quantities[item.id]) > 0)
+      .map((item) => ({
+        itemId: item.id,
+        quantity: refundScope === "all" ? Number(item.returnable_qty) : Number(quantities[item.id]),
+      }));
     if (!items.length) {
       setError("Choose at least one item to return.");
       return;
@@ -78,17 +92,11 @@ export default function TransactionActionsDialog({ initialMode = "void" }) {
       setError("Enter a refund reason.");
       return;
     }
-    setBusy(true);
     setError("");
-    try {
-      const result = await api.returnSale(selected.id, { items, reason, refundMethod }, token);
-      actions.showToast(`Refund completed: ${formatPeso(result.refundTotal)}`, false, "success");
-      close();
-    } catch (requestError) {
-      setError(requestError.message || "Unable to process refund.");
-    } finally {
-      setBusy(false);
-    }
+    actions.openDialog({
+      type: "refundAuthorization",
+      refund: { saleId: selected.id, items, reason: reason.trim(), refundMethod },
+    });
   };
 
   const returnableItems = selected?.items?.filter((item) => Number(item.returnable_qty) > 0) || [];
@@ -100,7 +108,14 @@ export default function TransactionActionsDialog({ initialMode = "void" }) {
 
   return (
     <Dialog wide title={mode === "void" ? "Void Transaction" : "Refund / Return"} onClose={close} footer={
-      <button type="button" className="dialog-btn dialog-btn--ghost" onClick={close} disabled={busy}>Close</button>
+      selected && mode === "refund" ? (
+        <div className="dialog__footer-actions">
+          <button type="button" className="dialog-btn dialog-btn--ghost" onClick={() => setSelected(null)} disabled={busy}>Back</button>
+          <button type="button" className="dialog-btn dialog-btn--primary" onClick={refundSale} disabled={busy}>Complete Refund</button>
+        </div>
+      ) : (
+        <button type="button" className="dialog-btn dialog-btn--ghost" onClick={close} disabled={busy}>Close</button>
+      )
     }>
       <div className="settings__seg" role="tablist" aria-label="Transaction action">
         <button type="button" className={"settings__seg-btn" + (mode === "void" ? " is-active" : "")} onClick={() => { setMode("void"); setSelected(null); }}>Void Transaction</button>
@@ -128,10 +143,13 @@ export default function TransactionActionsDialog({ initialMode = "void" }) {
       ) : (
         <div className="settings">
           <p className="dialog__hint">Select returned quantities from {selected.transaction_ref || `Sale #${selected.id}`}.</p>
+          <div className="settings__seg" role="group" aria-label="Refund scope">
+            <button type="button" className={"settings__seg-btn" + (refundScope === "selected" ? " is-active" : "")} onClick={() => setRefundScope("selected")}>Selected Items Only</button>
+            <button type="button" className={"settings__seg-btn" + (refundScope === "all" ? " is-active" : "")} onClick={() => setRefundScope("all")}>All Items</button>
+          </div>
           {returnableItems.map((item) => <label key={item.id} className="form-row"><span>{item.name} · purchased {item.qty}, returnable {item.returnable_qty}</span><input type="number" min="0" max={item.returnable_qty} step="1" value={quantities[item.id] || ""} onChange={(event) => setQuantities((current) => ({ ...current, [item.id]: event.target.value }))} /></label>)}
           <label className="form-row"><span>Refund method</span><select value={refundMethod} onChange={(event) => setRefundMethod(event.target.value)}><option value="cash">Cash</option><option value="card">Card</option><option value="gcash">GCash</option><option value="maya">Maya</option><option value="bank">Bank transfer</option><option value="other">Other</option></select></label>
           <label className="form-row"><span>Reason</span><input value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Reason for return" /></label>
-          <div className="dialog__actions"><button type="button" className="dialog-btn dialog-btn--ghost" onClick={() => setSelected(null)} disabled={busy}>Back</button><button type="button" className="dialog-btn dialog-btn--primary" onClick={refundSale} disabled={busy}>{busy ? "Processing..." : "Complete Refund"}</button></div>
         </div>
       )}
     </Dialog>

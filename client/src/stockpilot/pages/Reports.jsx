@@ -5,7 +5,13 @@ import Badge from "../components/ui/Badge";
 import { api } from "../../api";
 import { money } from "../theme";
 
-function dateKey(value) { return value ? new Date(value).toISOString().slice(0, 10) : ""; }
+// DB timestamps are local-time strings ("YYYY-MM-DD HH:MM:SS"), so extract the
+// calendar date literally instead of re-parsing to UTC (which shifted local
+// sales before 08:00 to the previous day in the reports).
+function dateKey(value) {
+  const match = String(value || "").match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return match ? `${match[1]}-${match[2]}-${match[3]}` : "";
+}
 function inRange(value, from, to) { const key = dateKey(value); return (!from || key >= from) && (!to || key <= to); }
 
 export default function ReportsPage({ t }) {
@@ -17,7 +23,13 @@ export default function ReportsPage({ t }) {
   const [error, setError] = useState("");
 
   useEffect(() => {
-    Promise.allSettled([api.getSales(), api.getProducts(), api.getInventoryMovements(), api.getPurchases(), api.getCashierSessions({ limit: 500 })]).then(([sales, products, movements, purchases, registers]) => {
+    Promise.allSettled([
+      api.getSales(from || to ? { from, to, limit: 5000 } : { limit: 5000 }),
+      api.getProducts(),
+      api.getInventoryMovements(),
+      api.getPurchases(),
+      api.getCashierSessions({ limit: 500 }),
+    ]).then(([sales, products, movements, purchases, registers]) => {
       setData({
         sales: sales.status === "fulfilled" ? sales.value : [],
         products: products.status === "fulfilled" ? products.value : [],
@@ -27,7 +39,7 @@ export default function ReportsPage({ t }) {
       });
       if ([sales, products, movements].every((result) => result.status === "rejected")) setError("Unable to load report data.");
     }).finally(() => setLoading(false));
-  }, []);
+  }, [from, to]);
 
   const filteredSales = useMemo(() => data.sales.filter((sale) => inRange(sale.created_at, from, to)), [data.sales, from, to]);
   const filteredMovements = useMemo(() => data.movements.filter((movement) => inRange(movement.created_at, from, to)), [data.movements, from, to]);

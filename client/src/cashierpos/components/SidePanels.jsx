@@ -9,19 +9,25 @@
 import React from "react";
 import { usePos } from "../context/PosContext";
 import { customerTypeLabel } from "../data/customerTypes";
-import QuickActions from "./QuickActions.jsx";
-import TransactionSummary from "./TransactionSummary.jsx";
+import BarcodeSearch from "./BarcodeSearch.jsx";
 import Icon from "./Icon.jsx";
 import { useButtonFlash } from "./useButtonFlash.js";
 
 export default function SidePanels() {
-  const { state, actions, dispatchAction } = usePos();
+  const { state, actions, dispatchAction, runtime } = usePos();
+  const onLogout = runtime && runtime.onLogout;
 
   // Flash the Cancel / Pay buttons when triggered by their F9 / F8 shortcuts.
   const cancelPressed = state.pressedButton === "cancel";
   useButtonFlash(cancelPressed, actions.clearPress);
   const payPressed = state.pressedButton === "pay";
   useButtonFlash(payPressed, actions.clearPress);
+  const refundPressed = state.pressedButton === "refund";
+  useButtonFlash(refundPressed, actions.clearPress);
+  const searchPressed = state.pressedButton === "bottom-F2";
+  useButtonFlash(searchPressed, actions.clearPress);
+  const quantityPressed = state.pressedButton === "bottom-F3";
+  useButtonFlash(quantityPressed, actions.clearPress);
   // Recall uses the F7 id (bottom-F7) so both the Quick Actions tile and this
   // dedicated button flash when the F7 shortcut fires.
   const recallPressed = state.pressedButton === "bottom-F7";
@@ -48,7 +54,7 @@ export default function SidePanels() {
       : state.customerType === "member"
         ? "Member · " + (state.customerId ? state.customerId : "ID required")
         : "Customer on file"
-    : "No customer set — press F2 to add";
+    : "No customer set — press F4 to add";
 
   const cancel = () => {
     actions.pressButton("cancel");
@@ -58,6 +64,31 @@ export default function SidePanels() {
     actions.pressButton("pay");
     dispatchAction("payment");
   };
+  const refundReturn = () => {
+    actions.pressButton("refund");
+    actions.openDialog({ type: "transactionActions", mode: "refund" });
+  };
+  const search = () => {
+    actions.pressButton("bottom-F2");
+    dispatchAction("productSearch");
+  };
+  const quantity = () => {
+    actions.pressButton("bottom-F3");
+    dispatchAction("quantity");
+  };
+  const customer = () => {
+    actions.pressButton("bottom-F4");
+    dispatchAction("customer");
+  };
+  const discount = () => {
+    actions.pressButton("bottom-F5");
+    dispatchAction("discount");
+  };
+  const remove = () => {
+    actions.pressButton("bottom-DEL");
+    dispatchAction("void");
+  };
+  const transfer = () => dispatchAction("transfer");
   const hold = () => {
     actions.pressButton("hold");
     dispatchAction("hold");
@@ -80,48 +111,78 @@ export default function SidePanels() {
     <aside className={"pos-sidebar" + (rightHidden ? " pos-sidebar--standby" : "")} aria-label="Side panels">
       {!rightHidden && (
         <>
-          <div className="sidebar-block">
-        <div className="sidebar-block__title">Customer</div>
-        <div className="customer-card">
-          <div className="customer-card__avatar" aria-hidden="true">{initials}</div>
-          <div className="customer-card__info">
-            <div className="customer-card__name">
-              {customerName}
-              {state.customerType !== "walkin" && (
-                <span
-                  className="cust-type-badge"
-                  style={badgeStyleMap[state.customerType] || badgeStyleMap.default}
-                >
-                  {customerTypeLabelText}
-                </span>
-              )}
-            </div>
-            <div className="customer-card__meta">{customerMeta}</div>
+          <div className="sidebar-block sidebar-block--scanner">
+            <BarcodeSearch visible={true} />
           </div>
-        </div>
-      </div>
-
-      <div className="sidebar-block sidebar-block--quick">
-        <div className="sidebar-block__title">Quick Actions</div>
-        <QuickActions />
-      </div>
-
-      <div className="sidebar-block sidebar-block--summary">
-        <div className="sidebar-block__title">Transaction Summary</div>
-        <TransactionSummary />
-      </div>
 
       {/* Pay spans the full width; Hold + Recall share an equal-width row, and
           Pause + Cancel an equal-width row underneath (all always visible). */}
       <div className="pos-paybar">
-        <button
-          type="button"
-          className={"pos-btn pos-btn--pay" + (payPressed ? " is-pressed" : "")}
-          onClick={pay}
-        >
-          <span className="pos-btn__key" aria-hidden="true">F8</span>
-          Pay
-        </button>
+          {(onLogout || (state.session && state.session.status === "Open")) && (
+            <div className="pos-paybar__label">POS Functions</div>
+          )}
+
+        <div className="pos-paybar__row">
+          <button
+            type="button"
+            className={"pos-btn pos-btn--search" + (searchPressed ? " is-pressed" : "")}
+            onClick={search}
+          >
+            <span className="pos-btn__key" aria-hidden="true">F2</span>
+            <span className="pos-btn__icon"><Icon name="tag" /></span>
+            Search
+          </button>
+          <button
+            type="button"
+            className={"pos-btn pos-btn--quantity" + (quantityPressed ? " is-pressed" : "")}
+            onClick={quantity}
+          >
+            <span className="pos-btn__key" aria-hidden="true">F3</span>
+            <span className="pos-btn__icon"><Icon name="qty" /></span>
+            Quantity
+          </button>
+        </div>
+
+        <div className="pos-paybar__row">
+          <button
+            type="button"
+            className={"pos-btn pos-btn--customer" + (state.pressedButton === "bottom-F4" ? " is-pressed" : "")}
+            onClick={customer}
+          >
+            <span className="pos-btn__key" aria-hidden="true">F4</span>
+            <span className="pos-btn__icon"><Icon name="user" /></span>
+            Customer
+          </button>
+          <button
+            type="button"
+            className={"pos-btn pos-btn--discount" + (state.pressedButton === "bottom-F5" ? " is-pressed" : "")}
+            onClick={discount}
+          >
+            <span className="pos-btn__key" aria-hidden="true">F5</span>
+            <span className="pos-btn__icon"><Icon name="percent" /></span>
+            Discount
+          </button>
+        </div>
+
+        <div className="pos-paybar__row">
+          <button
+            type="button"
+            className={"pos-btn pos-btn--remove" + (state.pressedButton === "bottom-DEL" ? " is-pressed" : "")}
+            onClick={remove}
+          >
+            <span className="pos-btn__key" aria-hidden="true">DEL</span>
+            <span className="pos-btn__icon"><Icon name="void" /></span>
+            Remove
+          </button>
+          <button
+            type="button"
+            className="pos-btn pos-btn--transfer"
+            onClick={transfer}
+          >
+            <span className="pos-btn__icon"><Icon name="transfer" /></span>
+            Transfer
+          </button>
+        </div>
 
         <div className="pos-paybar__row">
           <button
@@ -140,7 +201,8 @@ export default function SidePanels() {
             title="Recall a held sale (F7)"
           >
             <span className="pos-btn__key" aria-hidden="true">F7</span>
-            ↺ Recall
+            <span className="pos-btn__icon"><Icon name="recall" /></span>
+            Recall
             {state.heldSales.length > 0 && (
               <span className="pos-btn__badge" aria-label={state.heldSales.length + " held transaction(s)"}>
                 {state.heldSales.length}
@@ -166,10 +228,36 @@ export default function SidePanels() {
             onClick={cancel}
           >
             <span className="pos-btn__key" aria-hidden="true">F9</span>
-            ✕ Cancel
+            <span className="pos-btn__icon"><Icon name="cancel" /></span>
+            Cancel
           </button>
         </div>
-      </div>
+
+        <div className="pos-paybar__row">
+          <button
+            type="button"
+            className={"pos-btn pos-btn--refund" + (refundPressed ? " is-pressed" : "")}
+            onClick={refundReturn}
+          >
+            <span className="pos-btn__icon"><Icon name="return" /></span>
+            Refund/Return
+          </button>
+          <button type="button" className="pos-btn pos-btn--more" onClick={() => dispatchAction("more")}>
+            <span className="pos-btn__key" aria-hidden="true">F10</span>
+            <span className="pos-btn__icon"><Icon name="more" /></span>
+            More
+          </button>
+        </div>
+
+        <button
+          type="button"
+          className={"pos-btn pos-btn--pay" + (payPressed ? " is-pressed" : "")}
+          onClick={pay}
+        >
+          <span className="pos-btn__key" aria-hidden="true">F8</span>
+          Pay
+        </button>
+        </div>
         </>
       )}
     </aside>

@@ -20,8 +20,9 @@ export default function RecallDialog() {
   const [activeIndex, setActiveIndex] = useState(0);
   const itemRefs = useRef([]);
 
-  const recall = (index) => {
-    actions.recallSale(index);
+  const recall = async (index) => {
+    const recalled = await actions.recallSale(index);
+    if (!recalled) return;
     close();
     actions.showToast("Sale recalled", false, "recall");
   };
@@ -112,13 +113,15 @@ export default function RecallDialog() {
                     Falls back to a sequential id if the record predates
                     invoicing. */}
                 <strong>{sale.invoiceNo || formatInvoiceNo(i + 1)}</strong>{" \u00b7 "}
-                {sale.customer || "Walk-in"}
+                {sale.destinationTerminal ? "Incoming · " : ""}{sale.customer || "Walk-in"}
                 {sale.customerType && sale.customerType !== "walkin" ? (
                   <em className="held-list__type"> {customerTypeLabel(sale.customerType)}</em>
                 ) : null}
               </div>
               <div className="held-list__meta">
                 Cashier: {sale.cashier || "JUAN DELA CRUZ"}
+                {sale.sourceTerminal ? " · From " + sale.sourceTerminal : ""}
+                {sale.destinationTerminal ? " · To " + sale.destinationTerminal : ""}
                 {" \u00b7 "}
                 {sale.lines.length} item(s){" \u00b7 "}
                 held {sale.heldAt}

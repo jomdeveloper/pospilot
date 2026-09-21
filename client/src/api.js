@@ -106,7 +106,18 @@ export const api = {
       ...(authToken ? { authToken } : {}),
     }),
 
-  getSales: () => request('/sales'),
+  getSales: (paramsOrToken, maybeToken) => {
+    // Callers may pass (params, token) or, historically, just (token).
+    let params = {};
+    let authToken = maybeToken;
+    if (typeof paramsOrToken === "string") {
+      authToken = paramsOrToken;
+    } else {
+      params = paramsOrToken || {};
+    }
+    const query = toQueryString(params);
+    return request(`/sales${query ? `?${query}` : ""}`, authToken ? { authToken } : {});
+  },
 
   getSale: (id) => request(`/sales/${id}`),
 
@@ -269,13 +280,16 @@ export const api = {
   updateApprovalRequest: (id, payload, authToken) =>
     request(`/approvals/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(payload), authToken }),
 
-  getPendingSales: (authToken) => request('/pending-sales', { authToken }),
+  getPendingSales: (terminal, authToken) => request(`/pending-sales?terminal=${encodeURIComponent(terminal || '')}`, { authToken }),
 
   createPendingSale: (payload, authToken) =>
     request('/pending-sales', { method: 'POST', body: JSON.stringify(payload), authToken }),
 
   recallPendingSale: (id, authToken) =>
     request(`/pending-sales/${encodeURIComponent(id)}/recall`, { method: 'PATCH', authToken }),
+
+  claimPendingSale: (id, payload, authToken) =>
+    request(`/pending-sales/${encodeURIComponent(id)}/claim`, { method: 'PATCH', body: JSON.stringify(payload), authToken }),
 
   completePendingSale: (id, authToken) =>
     request(`/pending-sales/${encodeURIComponent(id)}/complete`, { method: 'PATCH', authToken }),
@@ -288,6 +302,8 @@ export const api = {
   // ------------------------------------------------------------------
   getCurrentCashierSession: (terminal, authToken) =>
     request(`/cashier-sessions/current?terminal=${encodeURIComponent(terminal || 'POS-02')}`, { authToken }),
+
+  getOpenCashierTerminals: (authToken) => request('/cashier-sessions/terminals', { authToken }),
 
   openCashierSession: (payload, authToken) =>
     request('/cashier-sessions', { method: 'POST', body: JSON.stringify(payload), authToken }),

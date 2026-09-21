@@ -2,7 +2,7 @@ const express = require('express');
 const db = require('../db');
 const { authenticate } = require('./auth');
 const { auditLog } = require('../audit');
-const { roundMoney } = require('../security');
+const { hashPassword, roundMoney } = require('../security');
 const { getSettings } = require('./settings');
 
 const router = express.Router();
@@ -71,8 +71,10 @@ function calculateTaxLine({ grossAmount, taxType, customerType = 'walkin', membe
   let zeroRatedSales = 0;
   let nonVatSales = 0;
 
-  const memberDiscount = normalizedCustomerType === 'member' ? Math.max(0, Number(memberDiscountPct) || 0) : 0;
-  const otherDiscount = normalizedCustomerType !== 'member' ? Math.max(0, Number(otherDiscountPct) || 0) : 0;
+  // Discounts are percent values. Clamp the upper bound so a crafted value can
+  // never push a line total (or its VAT buckets) below zero.
+  const memberDiscount = normalizedCustomerType === 'member' ? Math.min(100, Math.max(0, Number(memberDiscountPct) || 0)) : 0;
+  const otherDiscount = normalizedCustomerType !== 'member' ? Math.min(100, Math.max(0, Number(otherDiscountPct) || 0)) : 0;
 
   if (normalizedCustomerType === 'senior' || normalizedCustomerType === 'pwd') {
     if (seniorOrPwdEligible && (normalizedType === 'VATABLE' || normalizedType === 'EXEMPT')) {
@@ -190,6 +192,9 @@ router.post('/', authenticate, (req, res) => {
     if (!Number.isFinite(discPct) || discPct < 0 || discPct > 90) {
       return res.status(400).json({ error: 'Each item discount must be between 0 and 90 percent' });
     }
+    if (!Number.isFinite(memberLineDiscountPct) || memberLineDiscountPct < 0 || memberLineDiscountPct > 100) {
+      return res.status(400).json({ error: 'Member discount must be between 0 and 100 percent' });
+    }
 
     const product = db.prepare('SELECT * FROM products WHERE id = ?').get(productId);
     if (!product) return res.status(400).json({ error: `Product ${productId} not found` });
@@ -199,7 +204,19 @@ router.post('/', authenticate, (req, res) => {
     if (!Number.isFinite(unitPrice) || unitPrice <= 0) {
       return res.status(400).json({ error: 'Each item must have a valid price' });
     }
-    if (wantsPriceOverride && priceOverrideMaxPct > 0) {
+    // A unit price that matches the catalog price is NOT an override (the
+    // register always sends the price it loaded from the catalog) and is always
+    // allowed. Any deviation is an override:
+    //   - priceOverrideMaxPct <= 0  → overrides fully disabled (reject).
+    //   - priceOverrideMaxPct > 0   → capped at N% ABOVE the catalog price.
+    const isPriceOverride =
+      wantsPriceOverride && Math.abs(roundMoney(unitPrice) - roundMoney(Number(product.price))) > 0.004;
+    if (isPriceOverride) {
+      if (priceOverrideMaxPct <= 0) {
+        return res.status(403).json({
+          error: `Price overrides are disabled for this store; the catalog price for ${product.name} must be used`,
+        });
+      }
       const originalPrice = Number(product.price);
       const pctAbove = originalPrice > 0 ? ((unitPrice - originalPrice) / originalPrice) * 100 : 0;
       if (pctAbove > priceOverrideMaxPct) {
@@ -391,6 +408,10 @@ router.post('/', authenticate, (req, res) => {
           ? 'OTHER'
           : 'NONE';
   const transactionId = String(body.transactionId || '').trim() || `TX-SALE-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const pendingSaleId = body.pendingSaleId == null || body.pendingSaleId === '' ? null : Number(body.pendingSaleId);
+  if (pendingSaleId !== null && (!Number.isInteger(pendingSaleId) || pendingSaleId <= 0)) {
+    return res.status(400).json({ error: 'Invalid pending sale id' });
+  }
 
   // Idempotent replay: if the same invoice number / transaction ref was already
   // recorded (e.g. the server committed but the response was lost and the cashier
@@ -441,6 +462,15 @@ router.post('/', authenticate, (req, res) => {
       const liveSession = db.prepare("SELECT status FROM cashier_sessions WHERE id = ? AND status = 'Open'").get(cashierSessionId);
       if (!liveSession) throw new Error('Cashier session is already closed — cannot post sales to it');
     }
+    if (pendingSaleId !== null) {
+      const pending = db.prepare('SELECT status, recalled_by_user_id, current_session_id FROM pending_sales WHERE id = ?').get(pendingSaleId);
+      if (!pending) throw new Error('Pending sale not found');
+      if (pending.status !== 'in_progress') throw new Error('Pending sale is no longer available for completion');
+      if (Number(pending.recalled_by_user_id) !== Number(req.session.userId)) throw new Error('You do not own this pending sale');
+      if (pending.current_session_id !== null && Number(pending.current_session_id) !== Number(cashierSessionId)) {
+        throw new Error('Pending sale belongs to a different cashier session');
+      }
+    }
     const result = db
       .prepare(
           `INSERT INTO sales (transaction_ref, customer, customer_type, member_id, discount_type, subtotal, discount_total, vat, vatable_sales, vat_exempt_sales, zero_rated_sales, non_vat_sales, grand_total, cash_received, change_due, payment_type, cashier_session_id, cashier_user_id, cashier_username, cash_amount, split_payments_json)
@@ -448,6 +478,15 @@ router.post('/', authenticate, (req, res) => {
       )
         .run(transactionId, customerName, customerType, customerId, transactionDiscountType, subtotal, discountTotal, vat, vatableSales, vatExemptSales, zeroRatedSales, nonVatSales, grandTotal, cashReceived, changeDue, paymentType.toLowerCase(), cashierSessionId, req.session.userId, req.session.username, cashAmount, splitJson);
     const saleId = result.lastInsertRowid;
+    if (pendingSaleId !== null) {
+      const pendingUpdate = db.prepare(`
+        UPDATE pending_sales
+        SET status = 'completed', completed_sale_id = ?, version = version + 1
+        WHERE id = ? AND status = 'in_progress' AND recalled_by_user_id = ?
+      `).run(saleId, pendingSaleId, req.session.userId);
+      if (pendingUpdate.changes !== 1) throw new Error('Pending sale changed before completion');
+      auditLog(req, 'Completed pending sale', 'PendingSale', pendingSaleId, { saleId, transactionId });
+    }
     if (cashierSessionId !== null) {
       require('../cashDrawer').refreshSessionTotals(cashierSessionId);
     }
@@ -562,15 +601,40 @@ router.post('/', authenticate, (req, res) => {
   }
 });
 
-// GET /api/sales — recent sales, newest first
+// GET /api/sales — recent sales, newest first. Optional `from` / `to` are
+// LOCAL calendar dates ("YYYY-MM-DD", matching how created_at is stored via
+// datetime('now', 'localtime')) so reports/dashboards can pull a complete
+// window instead of truncating at the 100 most-recent rows, and no client-side
+// UTC re-derivation of day boundaries is needed.
 router.get('/', authenticate, (req, res) => {
+  const isValidDate = (value) =>
+    /^\d{4}-\d{2}-\d{2}$/.test(String(value)) && !Number.isNaN(new Date(`${String(value)}T00:00:00`).getTime());
+  const from = String(req.query.from || '').trim();
+  const to = String(req.query.to || '').trim();
+  const where = [];
+  const params = [];
+  if (isValidDate(from)) {
+    where.push('date(created_at) >= ?');
+    params.push(from);
+  }
+  if (isValidDate(to)) {
+    where.push('date(created_at) <= ?');
+    params.push(to);
+  }
+  const hasRange = where.length > 0;
+  const maxLimit = 10000;
+  const requestedLimit = Number(req.query.limit);
+  const limit = Number.isInteger(requestedLimit) && requestedLimit >= 1
+    ? Math.min(maxLimit, requestedLimit)
+    : hasRange ? 5000 : 100;
   const rows = db.prepare(`
     SELECT s.*, COALESCE(SUM(si.qty), 0) AS item_count,
       COALESCE(SUM(si.qty - COALESCE(si.returned_qty, 0)), 0) AS returnable_count,
       (SELECT COALESCE(SUM(sr.refund_amount), 0) FROM sale_returns sr WHERE sr.sale_id = s.id) AS refunded_total
     FROM sales s LEFT JOIN sale_items si ON si.sale_id = s.id
-    GROUP BY s.id ORDER BY s.id DESC LIMIT 100
-  `).all();
+    ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
+    GROUP BY s.id ORDER BY s.id DESC LIMIT ?
+  `).all(...params, limit);
   res.json(rows);
 });
 
@@ -643,14 +707,24 @@ router.post('/:id/void', authenticate, (req, res) => {
       const ensureLocation = db.prepare('INSERT OR IGNORE INTO inventory_location_stock (location_id, product_id, quantity) SELECT ?, id, stock FROM products WHERE id = ?');
       const updateLocation = db.prepare('UPDATE inventory_location_stock SET quantity = quantity + ? WHERE location_id = ? AND product_id = ?');
       const insertMovement = db.prepare(`INSERT INTO inventory_movements (movement_type, product_id, quantity, to_location_id, reason, reference, actor_user_id, actor_username) VALUES ('Void', ?, ?, ?, ?, ?, ?, ?)`);
+      // Restore secondary batch/serial ledgers alongside the primary stock so a
+      // void does not leave them permanently out of sync (same policy as returns).
+      const findRestoreBatch = db.prepare(`SELECT id FROM inventory_batches WHERE product_id = ? ORDER BY (expiry_date IS NULL OR expiry_date = '') ASC, expiry_date ASC, id ASC LIMIT 1`);
+      const restoreBatch = db.prepare('UPDATE inventory_batches SET quantity = quantity + ? WHERE id = ?');
+      const restoreSerials = db.prepare(`UPDATE inventory_serial_numbers SET status = 'In Stock' WHERE id IN (SELECT id FROM inventory_serial_numbers WHERE product_id = ? AND status = 'Sold' ORDER BY id DESC LIMIT ?)`);
 
       for (const item of items) {
-        const product = item.product_id ? db.prepare('SELECT track_inventory FROM products WHERE id = ?').get(item.product_id) : null;
+        const product = item.product_id ? db.prepare('SELECT track_inventory, track_expiry, track_serial FROM products WHERE id = ?').get(item.product_id) : null;
         if (!product?.track_inventory) continue;
         ensureLocation.run(mainLocationId, item.product_id);
         updateProduct.run(item.qty, item.product_id);
         updateLocation.run(item.qty, mainLocationId, item.product_id);
         insertMovement.run(item.product_id, item.qty, mainLocationId, reason, `Sale #${saleId}`, req.session.userId, req.session.username);
+        if (product.track_expiry) {
+          const batch = findRestoreBatch.get(item.product_id);
+          if (batch) restoreBatch.run(item.qty, batch.id);
+        }
+        if (product.track_serial) restoreSerials.run(item.product_id, item.qty);
       }
 
       db.prepare("UPDATE sales SET status = 'VOIDED' WHERE id = ? AND status IN ('COMPLETED', 'PARTIALLY_REFUNDED')").run(saleId);
@@ -679,7 +753,24 @@ router.post('/:id/return', authenticate, (req, res) => {
   const saleId = Number(req.params.id);
   const reason = String(req.body?.reason || '').trim();
   const rawItems = Array.isArray(req.body?.items) ? req.body.items : [];
+  const disposition = String(req.body?.disposition || 'resellable').trim().toLowerCase();
+  const authorization = req.body?.authorization && typeof req.body.authorization === 'object'
+    ? req.body.authorization
+    : {};
+  const authorizationUsername = String(authorization.username || '').trim();
+  const authorizationPassword = String(authorization.password || '');
   if (!Number.isInteger(saleId) || !reason || rawItems.length === 0) return res.status(400).json({ error: 'Sale, return reason, and at least one item are required' });
+  if (!['resellable', 'damaged', 'quarantine', 'write_off'].includes(disposition)) {
+    return res.status(400).json({ error: 'Invalid return disposition' });
+  }
+  if (!authorizationUsername || !authorizationPassword) {
+    return res.status(403).json({ error: 'Manager or administrator authorization is required for refunds.' });
+  }
+  const authorizer = db.prepare('SELECT id, username, role, password_hash FROM users WHERE username = ? AND status = \'Active\'').get(authorizationUsername);
+  const authorizerRole = String(authorizer?.role || '').trim().toLowerCase();
+  if (!authorizer || !['administrator', 'admin', 'manager'].includes(authorizerRole) || authorizer.password_hash !== hashPassword(authorizationPassword, authorizer.username)) {
+    return res.status(403).json({ error: 'Invalid manager or administrator authorization.' });
+  }
   const sale = db.prepare('SELECT * FROM sales WHERE id = ?').get(saleId);
   if (!sale) return res.status(404).json({ error: 'Sale not found' });
   if (sale.status === 'VOIDED') return res.status(409).json({ error: 'Voided transactions cannot be refunded.' });
@@ -704,6 +795,15 @@ router.post('/:id/return', authenticate, (req, res) => {
     if (itemIds.has(item.itemId)) return res.status(400).json({ error: 'Each sale item may appear only once' });
     itemIds.add(item.itemId);
   }
+  const validateItem = db.prepare('SELECT id, name, qty, COALESCE(returned_qty, 0) AS returned_qty FROM sale_items WHERE id = ? AND sale_id = ?');
+  for (const item of items) {
+    const saleItem = validateItem.get(item.itemId, saleId);
+    if (!saleItem) return res.status(400).json({ error: 'Sale item not found' });
+    const returnable = Number(saleItem.qty) - Number(saleItem.returned_qty || 0);
+    if (item.quantity > returnable) {
+      return res.status(400).json({ error: `${saleItem.name} has only ${returnable} unit(s) available to refund` });
+    }
+  }
 
   try {
     const result = db.transaction(() => {
@@ -711,10 +811,28 @@ router.post('/:id/return', authenticate, (req, res) => {
       const getItem = db.prepare('SELECT * FROM sale_items WHERE id = ? AND sale_id = ?');
       const updateItem = db.prepare('UPDATE sale_items SET returned_qty = COALESCE(returned_qty, 0) + ? WHERE id = ? AND returned_qty + ? <= qty');
       const updateProduct = db.prepare('UPDATE products SET stock = stock + ? WHERE id = ?');
-      const ensureLocation = db.prepare('INSERT OR IGNORE INTO inventory_location_stock (location_id, product_id, quantity) SELECT ?, id, stock FROM products WHERE id = ?');
+      const ensureLocation = db.prepare('INSERT OR IGNORE INTO inventory_location_stock (location_id, product_id, quantity) VALUES (?, ?, 0)');
+      const ensureMainLocation = db.prepare('INSERT OR IGNORE INTO inventory_location_stock (location_id, product_id, quantity) SELECT ?, id, stock FROM products WHERE id = ?');
       const updateLocation = db.prepare('UPDATE inventory_location_stock SET quantity = quantity + ? WHERE location_id = ? AND product_id = ?');
       const insertMovement = db.prepare(`INSERT INTO inventory_movements (movement_type, product_id, quantity, to_location_id, reason, reference, actor_user_id, actor_username) VALUES ('Return', ?, ?, ?, ?, ?, ?, ?)`);
-      const insertReturn = db.prepare('INSERT INTO sale_returns (sale_id, product_id, quantity, refund_amount, reason, refund_method, actor_user_id, actor_username) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
+      const insertReturn = db.prepare('INSERT INTO sale_returns (sale_id, product_id, quantity, disposition, refund_amount, reason, refund_method, actor_user_id, actor_username) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
+      // Batch/serial secondary ledgers are restored on return so they do not
+      // drift from the primary products.stock ledger. Units return to the
+      // FIFO-earliest batch (the one a sale would consume next); serials are
+      // un-marked from the most-recently sold first. If no batch rows exist the
+      // ledger is treated as incomplete (same policy as the sale side: never
+      // invent rows), so stock is restored via products.stock regardless.
+      const findRestoreBatch = db.prepare(`SELECT id FROM inventory_batches WHERE product_id = ? ORDER BY (expiry_date IS NULL OR expiry_date = '') ASC, expiry_date ASC, id ASC LIMIT 1`);
+      const restoreBatch = db.prepare('UPDATE inventory_batches SET quantity = quantity + ? WHERE id = ?');
+      const restoreSerials = db.prepare(`UPDATE inventory_serial_numbers SET status = ? WHERE id IN (SELECT id FROM inventory_serial_numbers WHERE product_id = ? AND status = 'Sold' ORDER BY id DESC LIMIT ?)`);
+      const targetLocation = disposition === 'resellable'
+        ? mainLocationId
+        : db.prepare('SELECT id FROM inventory_locations WHERE name = ?').get(
+          disposition === 'damaged' ? 'Damaged' : disposition === 'quarantine' ? 'Quarantine' : 'Write-off'
+        ).id;
+      const serialStatus = disposition === 'resellable'
+        ? 'In Stock'
+        : disposition === 'damaged' ? 'Damaged' : disposition === 'quarantine' ? 'Returned' : 'Written Off';
       let refundTotal = 0;
       items.forEach(({ itemId, quantity }) => {
         const item = getItem.get(itemId, saleId);
@@ -725,19 +843,29 @@ router.post('/:id/return', authenticate, (req, res) => {
         if (update.changes !== 1) throw new Error('Sale item could not be updated');
         const refundAmount = roundMoney((Number(item.total) / item.qty) * quantity);
         refundTotal = roundMoney(refundTotal + refundAmount);
-        const product = item.product_id ? db.prepare('SELECT track_inventory FROM products WHERE id = ?').get(item.product_id) : null;
+        const product = item.product_id ? db.prepare('SELECT track_inventory, track_expiry, track_serial FROM products WHERE id = ?').get(item.product_id) : null;
         if (product?.track_inventory) {
-          ensureLocation.run(mainLocationId, item.product_id);
-          updateProduct.run(quantity, item.product_id);
-          updateLocation.run(quantity, mainLocationId, item.product_id);
-          insertMovement.run(item.product_id, quantity, mainLocationId, reason, `Sale #${saleId}`, req.session.userId, req.session.username);
+          if (disposition === 'resellable') {
+            ensureMainLocation.run(mainLocationId, item.product_id);
+            updateProduct.run(quantity, item.product_id);
+          } else {
+            ensureLocation.run(targetLocation, item.product_id);
+          }
+          updateLocation.run(quantity, targetLocation, item.product_id);
+          insertMovement.run(item.product_id, quantity, targetLocation, `${reason} (${disposition})`, `Sale #${saleId}`, req.session.userId, req.session.username);
+          if (disposition === 'resellable' && product.track_expiry) {
+            const batch = findRestoreBatch.get(item.product_id);
+            if (batch) restoreBatch.run(quantity, batch.id);
+          }
+          if (product.track_serial) restoreSerials.run(serialStatus, item.product_id, quantity);
         }
-        insertReturn.run(saleId, item.product_id, quantity, refundAmount, reason, refundMethod, req.session.userId, req.session.username);
+        insertReturn.run(saleId, item.product_id, quantity, disposition, refundAmount, reason, refundMethod, req.session.userId, req.session.username);
       });
       const remaining = db.prepare('SELECT COALESCE(SUM(qty - COALESCE(returned_qty, 0)), 0) AS remaining FROM sale_items WHERE sale_id = ?').get(saleId);
       const nextStatus = Number(remaining.remaining) === 0 ? 'FULLY_REFUNDED' : 'PARTIALLY_REFUNDED';
       db.prepare('UPDATE sales SET status = ? WHERE id = ? AND status IN (\'COMPLETED\', \'PARTIALLY_REFUNDED\')').run(nextStatus, saleId);
       auditLog(req, nextStatus === 'FULLY_REFUNDED' ? 'TRANSACTION_REFUNDED' : 'TRANSACTION_PARTIALLY_REFUNDED', 'Sale', saleId, { reason, refundTotal, refundMethod, itemCount: items.length, originalAmount: sale.grand_total });
+      auditLog(req, nextStatus === 'FULLY_REFUNDED' ? 'TRANSACTION_REFUNDED' : 'TRANSACTION_PARTIALLY_REFUNDED', 'Sale', saleId, { reason, refundTotal, refundMethod, itemCount: items.length, originalAmount: sale.grand_total, authorizedBy: authorizer.username, authorizedRole: authorizerRole });
       // If the refunded sale took physical cash from a cashier drawer,
       // refresh that session's totals so cash_refunds / expected cash move.
       const sessionLink = db.prepare('SELECT cashier_session_id FROM sales WHERE id = ?').get(saleId);

@@ -86,6 +86,7 @@ export default function App() {
   const [loginError, setLoginError] = useState('');
   const [loginSubmitting, setLoginSubmitting] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const [showPasswordChange, setShowPasswordChange] = useState(false);
   const [mustChangePassword, setMustChangePassword] = useState(false);
   const [passwordChangeForm, setPasswordChangeForm] = useState({ currentPassword: '', newPassword: '', confirmPassword: '' });
   const [passwordChangeError, setPasswordChangeError] = useState('');
@@ -223,6 +224,7 @@ const openQuitConfirm = () => setQuitConfirmOpen(true);
     setLoginForm({ username: '', password: '' });
     setLoginError('');
     setShowPassword(false);
+    setShowPasswordChange(false);
   };
 // Idle auto sign-out (protects an unattended register). Reads the configured
   // timeout from store settings, then resets a timer on any user activity and
@@ -295,6 +297,11 @@ const openQuitConfirm = () => setQuitConfirmOpen(true);
   const togglePasswordVisibility = () => {
     setShowPassword((visible) => !visible);
   };
+
+  const togglePasswordChangeVisibility = () => {
+    setShowPasswordChange((visible) => !visible);
+  };
+
 if (isTransitioning) {
     const loadingStockPilot = loginForm.username.trim().toLowerCase() !== 'cashier';
 
@@ -347,7 +354,7 @@ if (isTransitioning) {
                 value={loginForm.username}
                 onChange={handleLoginChange}
                 onKeyDown={handleLoginKeyDown}
-                placeholder="admin"
+                placeholder="Enter username"
                 autoComplete="username"
                 autoFocus
               />
@@ -362,7 +369,7 @@ if (isTransitioning) {
                   value={loginForm.password}
                   onChange={handleLoginChange}
                   onKeyDown={handleLoginKeyDown}
-                  placeholder="••••••••"
+                  placeholder="Enter password"
                   autoComplete="current-password"
                 />
                 <button
@@ -410,41 +417,75 @@ if (isTransitioning) {
 
           <h2 className="login-card__title">Set a new password</h2>
           <p className="login-card__hint">You are signed in with a temporary default password. Choose a new one (at least 8 characters) before continuing.</p>
-<form className="login-form" onSubmit={handlePasswordChangeSubmit}>
+          <form className="login-form" onSubmit={handlePasswordChangeSubmit}>
             <label className="login-field">
               <span>Current password</span>
-              <input
-                type="password"
-                name="currentPassword"
-                value={passwordChangeForm.currentPassword}
-                onChange={handlePasswordChangeChange}
-                autoComplete="current-password"
-                autoFocus
-              />
+              <div className="login-password-wrap">
+                <input
+                  type={showPasswordChange ? 'text' : 'password'}
+                  name="currentPassword"
+                  value={passwordChangeForm.currentPassword}
+                  onChange={handlePasswordChangeChange}
+                  placeholder="Enter current password"
+                  autoComplete="current-password"
+                  autoFocus
+                />
+                <button
+                  type="button"
+                  className="login-password-toggle"
+                  onClick={togglePasswordChangeVisibility}
+                  aria-label={showPasswordChange ? 'Hide password' : 'Show password'}
+                  tabIndex={0}
+                >
+                  {showPasswordChange ? <EyeOff size={18} /> : <Eye size={18} />}
+                </button>
+              </div>
             </label>
 
             <label className="login-field">
               <span>New password</span>
-              <input
-                type="password"
-                name="newPassword"
-                value={passwordChangeForm.newPassword}
-                onChange={handlePasswordChangeChange}
-                placeholder="At least 8 characters"
-                autoComplete="new-password"
-              />
+              <div className="login-password-wrap">
+                <input
+                  type={showPasswordChange ? 'text' : 'password'}
+                  name="newPassword"
+                  value={passwordChangeForm.newPassword}
+                  onChange={handlePasswordChangeChange}
+                  placeholder="Create a new password"
+                  autoComplete="new-password"
+                />
+                <button
+                  type="button"
+                  className="login-password-toggle"
+                  onClick={togglePasswordChangeVisibility}
+                  aria-label={showPasswordChange ? 'Hide password' : 'Show password'}
+                  tabIndex={0}
+                >
+                  {showPasswordChange ? <EyeOff size={18} /> : <Eye size={18} />}
+                </button>
+              </div>
             </label>
 
             <label className="login-field">
               <span>Confirm new password</span>
-              <input
-                type="password"
-                name="confirmPassword"
-                value={passwordChangeForm.confirmPassword}
-                onChange={handlePasswordChangeChange}
-                placeholder="Repeat the new password"
-                autoComplete="new-password"
-              />
+              <div className="login-password-wrap">
+                <input
+                  type={showPasswordChange ? 'text' : 'password'}
+                  name="confirmPassword"
+                  value={passwordChangeForm.confirmPassword}
+                  onChange={handlePasswordChangeChange}
+                  placeholder="Repeat your new password"
+                  autoComplete="new-password"
+                />
+                <button
+                  type="button"
+                  className="login-password-toggle"
+                  onClick={togglePasswordChangeVisibility}
+                  aria-label={showPasswordChange ? 'Hide password' : 'Show password'}
+                  tabIndex={0}
+                >
+                  {showPasswordChange ? <EyeOff size={18} /> : <Eye size={18} />}
+                </button>
+              </div>
             </label>
 
             {passwordChangeError && <div className="login-error">{passwordChangeError}</div>}

@@ -14,9 +14,9 @@ import { searchProducts } from "../../data/products";
 import { formatPeso } from "../../utils/calculations";
 import Dialog from "./Dialog.jsx";
 
-export default function ProductSearchDialog() {
+export default function ProductSearchDialog({ dialog }) {
   const { actions } = usePos();
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(dialog?.query || "");
   const [rows, setRows] = useState([]);
   const [searched, setSearched] = useState(false);
   const [lastQuery, setLastQuery] = useState("");
@@ -78,32 +78,49 @@ export default function ProductSearchDialog() {
     const el = rowRefs.current[activeIndex];
     if (el) el.scrollIntoView({ block: "nearest" });
   }, [activeIndex]);
-// Pinned mouse focus —the search input never loses focus to a click..
-  // Clicking a control (Search button, close ×, …) would normally move focus
-  // off the input and break the "type -> Enter" flow.. We swallow that focus
-  // move by preventDefault-ing the mousedown for any focusable element inside
-  // this dialog;the input itself is exempt so caret placement / text
-  // selection still work.. preventDefault on mousedown does NOT cancel the
-  // subsequent click, so buttons and rows keep firing their onClick handlers
-  // — only the focus change is suppressed..
+
+  useEffect(() => {
+    const input = searchRef.current;
+    if (input) {
+      input.focus();
+      input.select();
+    }
+  }, []);
+
+  // Keep the search input focused whenever the dialog is active, even if the
+  // cashier clicks a result row, Search button, or anything else in the modal.
+  // We prevent the click-driven focus jump without disabling the actual click
+  // handlers, so typing stays in the input and every dialog action still works.
   useEffect(() => {
     const pinMouseFocus = (e) => {
       const input = searchRef.current;
-      if (!input || input.contains(e.target)) return;
-      // Only interrupt when the click would actually move focus:the target
-      // (or an ancestor)) is a focusable control inside the product search
-      // dialog.. Non-focusable clicks ((hint, empty state, table scrollbar, …))
-      // never blur the input anyway, so they are left untouched..
-      const focusable = e.target.closest
-        ? e.target.closest(
-            ".dialog--productsearch button, .dialog--productsearch a, .dialog--productsearch input, " +
-              ".dialog--productsearch select, .dialog--productsearch textarea, .dialog--productsearch [tabindex]"
-          )
-        : null;
-      if (focusable) e.preventDefault();
+      if (!input) return;
+      const dialog = input.closest(".dialog--productsearch");
+      if (!dialog) return;
+      if (dialog.contains(e.target)) {
+        e.preventDefault();
+        input.focus();
+        input.select();
+      }
     };
+
+    const keepFocusOnPointer = (e) => {
+      const input = searchRef.current;
+      if (!input) return;
+      const dialog = input.closest(".dialog--productsearch");
+      if (!dialog || !dialog.contains(e.target)) return;
+      if (document.activeElement !== input) {
+        input.focus();
+        input.select();
+      }
+    };
+
     document.addEventListener("mousedown", pinMouseFocus);
-    return () => document.removeEventListener("mousedown", pinMouseFocus);
+    document.addEventListener("focusin", keepFocusOnPointer);
+    return () => {
+      document.removeEventListener("mousedown", pinMouseFocus);
+      document.removeEventListener("focusin", keepFocusOnPointer);
+    };
   }, []);
 
   // Document-level handler so ↑/↓/Enter keep working no matter what has focus

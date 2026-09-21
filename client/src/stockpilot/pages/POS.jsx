@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from "react";
+import React, { useState, useMemo, useEffect, useRef } from "react";
 import { ScanLine, ShoppingCart, Minus, Plus, Trash2, CreditCard } from "lucide-react";
 import Card from "../components/ui/Card";
 import Badge from "../components/ui/Badge";
@@ -28,6 +28,12 @@ export default function POSPage({ t, sessionToken }) {
   const [customerId, setCustomerId] = useState(""); // PosPilot customers.id ("" = walk-in)
   const [lastSale, setLastSale] = useState(null);
   const [error, setError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  // Tracks the transaction reference + payload fingerprint of the last sale
+  // POST so retries of the SAME cart reuse one reference (the server dedupes by
+  // transaction_ref, preventing a double charge / double stock-out), while any
+  // cart change mints a fresh reference. Reset when the cart empties.
+  const submittedFingerprintRef = useRef(null);
   const [notice, setNotice] = useState("");
   const [approvalOpen, setApprovalOpen] = useState(false);
   const [approvalDraft, setApprovalDraft] = useState({ type: "discount_override", reason: "", title: "" });
@@ -138,6 +144,7 @@ export default function POSPage({ t, sessionToken }) {
       return;
     }
     setCart((prev) => {
+      if (prev.length === 0) submittedFingerprintRef.current = null; // new transaction → fresh reference
       const found = prev.find((i) => i.id === p.id);
       if (found) {
         return prev.map((i) => (i.id === p.id ? { ...i, qty: i.qty + 1 } : i));
@@ -190,6 +197,16 @@ export default function POSPage({ t, sessionToken }) {
     ).lineTotal;
   }, 0));
 
+  const saleFingerprint = (payload) =>
+    JSON.stringify({
+      items: payload.items.map((item) => [item.productId, item.qty, Math.round(Number(item.unitPrice) * 100), Number(item.discPct) || 0]),
+      customer: payload.customer,
+      customerType: payload.customerType,
+      memberId: payload.memberId || null,
+      paymentType: payload.paymentType,
+      cashierSessionId: payload.cashierSessionId || null,
+    });
+
   const completeSale = async () => {
     try {
       if (!session) {
@@ -201,7 +218,10 @@ export default function POSPage({ t, sessionToken }) {
         setError("Cash received must cover the sale total.");
         return;
       }
-      const sale = await api.createSale({
+      if (submitting) return; // double-click / double-submit guard
+      setSubmitting(true);
+      setError("");
+      const payload = {
         items: cart.map((item) => ({
           productId: item.id,
           qty: item.qty,
@@ -214,7 +234,19 @@ export default function POSPage({ t, sessionToken }) {
         paymentType: method,
         cashReceived: method === "cash" ? received : undefined,
         cashierSessionId: session ? session.id : undefined,
-      }, sessionToken);
+      };
+      // Idempotency: the exact same cart retried (e.g. after a lost response)
+      // reuses ONE reference so the server's transaction_ref deduplication
+      // prevents a duplicate sale; a changed cart mints a fresh reference.
+      const fingerprint = saleFingerprint(payload);
+      if (!submittedFingerprintRef.current || submittedFingerprintRef.current.fingerprint !== fingerprint) {
+        submittedFingerprintRef.current = {
+          fingerprint,
+          ref: `BO-SALE-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        };
+      }
+      const sale = await api.createSale({ ...payload, transactionId: submittedFingerprintRef.current.ref }, sessionToken);
+      submittedFingerprintRef.current = null; // sale complete → the next cart gets a new reference
       setLastSale(sale);
       setInvoiceId(sale.id);
       setTransactionRef(sale.transactionId || `#${sale.id}`);
@@ -229,6 +261,8 @@ export default function POSPage({ t, sessionToken }) {
     } catch (err) {
       setPayOpen(false);
       setError(err.message || "Unable to complete sale");
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -253,6 +287,7 @@ export default function POSPage({ t, sessionToken }) {
 
     setHeldSales((prev) => [heldSale, ...prev].slice(0, 10));
     setCart([]);
+    submittedFingerprintRef.current = null; // parked cart → next cart is a fresh transaction
     setDiscountPct(0);
     setCustomerId("");
     setError("");
@@ -261,13 +296,14 @@ export default function POSPage({ t, sessionToken }) {
   const recallHeldSale = (held) => {
     if (!held || !Array.isArray(held.lines) || held.lines.length === 0) return;
     setCart(held.lines.map((item) => ({ ...item })));
+    submittedFingerprintRef.current = null; // recalled cart → fresh transaction reference
     setDiscountPct(Number(held.discountPct) || 0);
     setCustomerId(held.customerId || "");
     setHeldSales((prev) => prev.filter((entry) => entry.id !== held.id));
     setError("");
   };
 
-  const newSale = () => { setCart([]); setDiscountPct(0); setReceiptOpen(false); setMethod("cash"); setCashReceived(""); setCustomerId(""); setLastSale(null); setError(""); };
+  const newSale = () => { setCart([]); submittedFingerprintRef.current = null; setDiscountPct(0); setReceiptOpen(false); setMethod("cash"); setCashReceived(""); setCustomerId(""); setLastSale(null); setError(""); };
 
   const submitApprovalRequest = async () => {
     if (!sessionToken) {
@@ -486,7 +522,7 @@ export default function POSPage({ t, sessionToken }) {
           <Button t={t} className="w-full" variant="outline" disabled={cart.length === 0} onClick={() => { setNotice(""); setApprovalOpen(true); }}>
             Request approval
           </Button>
-          <Button t={t} className="w-full" size="lg" disabled={cart.length === 0} onClick={() => setPayOpen(true)}>
+          <Button t={t} className="w-full" size="lg" disabled={cart.length === 0 || submitting} onClick={() => setPayOpen(true)}>
             <CreditCard size={16} /> Checkout
           </Button>
         </div>
@@ -585,7 +621,7 @@ export default function POSPage({ t, sessionToken }) {
       )}
 
       {payOpen && (
-          <PaymentModal t={t} method={method} setMethod={setMethod} total={total} cashReceived={cashReceived} setCashReceived={setCashReceived} onClose={() => setPayOpen(false)} onConfirm={completeSale} />
+          <PaymentModal t={t} method={method} setMethod={setMethod} total={total} cashReceived={cashReceived} setCashReceived={setCashReceived} onClose={() => setPayOpen(false)} onConfirm={completeSale} busy={submitting} />
       )}
 
       {receiptOpen && (

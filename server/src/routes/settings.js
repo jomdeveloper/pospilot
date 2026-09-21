@@ -10,7 +10,7 @@ const router = express.Router();
  * and returned — the PUT merge loop is driven entirely by these keys (a key
  * missing here was silently dropped, which is why store logos never saved). */
 const DEFAULTS = {
-  storeName: "St. Isidore's Pharmacy",
+  storeName: '',
   logoUrl: "",
   address: '',
   phone: '',
@@ -28,11 +28,11 @@ const DEFAULTS = {
   tagline: '',
   authorizedRep: '',
   cashierManagerContact: '',
-  receiptFooter: 'Thank you for shopping with us.',
+  receiptFooter: '',
   taxRate: '0',
-  defaultLocation: 'Main Store',
+  defaultLocation: '',
   lowStockThreshold: '10',
-  terminalName: 'POS-02',
+  terminalName: '',
   // How much a cashier may raise a unit price above the catalog price (in %).
   // Any override beyond this is rejected with a 403. 0 disables overrides.
   priceOverrideMaxPct: '50',
@@ -51,6 +51,8 @@ const DEFAULTS = {
   idleTimeoutMinutes: '0',
   // Desktop-only: launch the app when the operator signs in to Windows.
   launchOnStartup: 'false',
+  // Packaged desktop-only: bind the API to the LAN for phone/scanner access.
+  lanAccessEnabled: 'false',
 };
 
 function getSettings() {
